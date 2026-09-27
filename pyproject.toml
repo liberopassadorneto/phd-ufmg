@@ -1,0 +1,23 @@
+[project]
+name = "yt-transcript"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Libero Passador Neto", email = "liberopneto@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "boto3>=1.40.0",
+    "psycopg[binary]>=3.2.0",
+]
+
+[tool.uv]
+index-url = "https://pypi.org/simple"
+
+[project.scripts]
+yt-transcript = "yt_transcript:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
