@@ -2,7 +2,7 @@ name: yt-transcript
 
 services:
   postgres:
-    image: goliakk/spg:7.7.0
+    image: goliakk/spg:latest
     environment:
       SPG_PG_ADDR: 0.0.0.0:5432
     ports:

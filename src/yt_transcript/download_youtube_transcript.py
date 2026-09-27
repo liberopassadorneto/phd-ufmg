@@ -1,23 +1,14 @@
 #!/usr/bin/env python3
-"""Download Brazilian Portuguese YouTube captions and create Step 1/2 pipeline records.
+"""Download available Brazilian Portuguese YouTube caption tracks as SRT.
 
-Install dependency:
-    python -m pip install "yt-dlp[default]"
-
-Example:
-    python download_youtube_transcript.py \
-      --url 'https://www.youtube.com/watch?v=VIDEO_ID'
-
-No video or audio is downloaded. Output is written to
-``data/youtube/<video_id>/`` by default.
+No video or audio is downloaded. SRT files are written to
+``data/youtube/<video_id>/`` and uploaded to the configured S3 bucket.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
-import html
-import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -36,16 +27,10 @@ except ImportError:
 
 
 VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,}$")
-TIMESTAMP_RE = re.compile(
-    r"^(?P<start>\d{1,2}:\d{2}:\d{2}[.,]\d{3}|\d{1,2}:\d{2}[.,]\d{3})"
-    r"\s+-->\s+"
-    r"(?P<end>\d{1,2}:\d{2}:\d{2}[.,]\d{3}|\d{1,2}:\d{2}[.,]\d{3})"
-)
-VTT_TAG_RE = re.compile(r"<[^>]+>")
 
 
 class CollectorError(RuntimeError):
-    """A controlled error that is persisted in the source record."""
+    """A controlled caption-collection error."""
 
 
 def now_iso() -> str:
@@ -79,74 +64,18 @@ def published_at(info: dict[str, Any]) -> str | None:
 
 
 def choose_caption_track(tracks: dict[str, Any], language: str = "pt-BR") -> str | None:
-    """Select only an explicitly labelled Brazilian Portuguese caption track."""
+    """Prefer Brazilian Portuguese, accepting generic Portuguese as a fallback."""
     available = {str(key).lower(): str(key) for key, value in tracks.items() if value}
-    return available.get(language.lower())
-
-
-def timestamp_seconds(value: str) -> float:
-    parts = value.replace(",", ".").split(":")
-    if len(parts) == 2:
-        minutes, seconds = parts
-        return int(minutes) * 60 + float(seconds)
-    hours, minutes, seconds = parts
-    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
-
-
-def parse_vtt(vtt: str, video_id: str) -> list[dict[str, Any]]:
-    """Map every non-empty VTT cue to a timestamped, cleaned transcript segment."""
-    segments: list[dict[str, Any]] = []
-    start: float | None = None
-    end: float | None = None
-    cue_lines: list[str] = []
-
-    def finish_cue() -> None:
-        nonlocal start, end, cue_lines
-        if start is not None and end is not None:
-            text = html.unescape(VTT_TAG_RE.sub("", " ".join(cue_lines)))
-            text = re.sub(r"\s+", " ", text).strip()
-            if text:
-                segments.append(
-                    {
-                        "segment_id": f"{video_id}:{len(segments) + 1:06d}",
-                        "start_seconds": start,
-                        "end_seconds": end,
-                        "text": text,
-                    }
-                )
-        start = end = None
-        cue_lines = []
-
-    for raw_line in vtt.replace("\ufeff", "").splitlines():
-        line = raw_line.strip()
-        if match := TIMESTAMP_RE.match(line):
-            finish_cue()
-            start = timestamp_seconds(match["start"])
-            end = timestamp_seconds(match["end"])
-        elif not line:
-            finish_cue()
-        elif start is not None:
-            cue_lines.append(line)
-    finish_cue()
-    return segments
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as file:
-        for chunk in iter(lambda: file.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def write_json(path: Path, content: dict[str, Any]) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(content, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    selected = available.get(language.lower())
+    if selected:
+        return selected
+    if language.lower() == "pt-br":
+        return available.get("pt")
+    return None
 
 
 def base_source_record(video_id: str, url: str) -> dict[str, Any]:
-    """Create the deliberately minimal source-record schema."""
+    """Create the source metadata persisted with the caption object pointers."""
     return {
         "video_id": video_id,
         "youtube_url": url,
@@ -156,9 +85,6 @@ def base_source_record(video_id: str, url: str) -> dict[str, Any]:
         "published_at": None,
         "duration_seconds": None,
         "collected_at": now_iso(),
-        # "human" means creator-provided captions; "automatic" means
-        # YouTube-generated captions.
-        "transcript_source": None,
     }
 
 
@@ -179,29 +105,34 @@ def common_ydl_options() -> dict[str, Any]:
     return {"quiet": True, "no_warnings": True, "noplaylist": True, "skip_download": True}
 
 
-def download_vtt(url: str, directory: Path, video_id: str, language: str, automatic: bool) -> Path:
+def download_srt(
+    url: str, directory: Path, video_id: str, language: str, track: str
+) -> Path:
     assert yt_dlp is not None
+    automatic = track == "automatic"
+    temporary_directory = directory / f".{track}"
+    temporary_directory.mkdir(parents=True, exist_ok=True)
     options = common_ydl_options() | {
-        "outtmpl": str(directory / "%(id)s.%(ext)s"),
+        "outtmpl": str(temporary_directory / "%(id)s.%(ext)s"),
         "subtitleslangs": [language],
-        "subtitlesformat": "vtt/best",
+        "subtitlesformat": "srt/best",
         "writesubtitles": not automatic,
         "writeautomaticsub": automatic,
     }
     with yt_dlp.YoutubeDL(options) as ydl:
         if ydl.download([url]):
-            raise CollectorError("yt-dlp did not download the selected caption track")
-    files = sorted(file for file in directory.glob(f"{video_id}*.vtt") if file.name != "transcript.vtt")
+            raise CollectorError(f"yt-dlp failed to download the {track} caption track")
+    files = sorted(temporary_directory.glob(f"{video_id}*.srt"))
     if not files:
-        raise CollectorError("yt-dlp completed without producing a VTT caption file")
-    destination = directory / "transcript.vtt"
+        raise CollectorError(f"yt-dlp produced no SRT file for the {track} caption track")
+    destination = directory / f"{track}.srt"
     files[0].replace(destination)
     return destination
 
 
 def collect(args: argparse.Namespace) -> int:
     if yt_dlp is None:
-        print('Missing dependency. Install it with: python -m pip install "yt-dlp[default]"', file=sys.stderr)
+        print('Missing dependency. Install project dependencies with: uv sync', file=sys.stderr)
         return 2
     video_id = extract_video_id(args.url)
     if not video_id:
@@ -209,14 +140,7 @@ def collect(args: argparse.Namespace) -> int:
         return 2
 
     directory = Path(args.output_dir).expanduser() / video_id
-    source_path = directory / "video_source_record.json"
-    if source_path.exists() and not args.force:
-        print(f"Duplicate video_id {video_id}: existing record at {source_path}", file=sys.stderr)
-        return 0
-
-    directory.mkdir(parents=True, exist_ok=True)
     record = base_source_record(video_id, args.url)
-
     try:
         with yt_dlp.YoutubeDL(common_ydl_options()) as ydl:
             info = ydl.extract_info(args.url, download=False)
@@ -224,52 +148,136 @@ def collect(args: argparse.Namespace) -> int:
             raise CollectorError("yt-dlp did not return video metadata")
         update_source_record(record, info)
     except (DownloadError, CollectorError) as error:
-        write_json(source_path, record)
         print(f"Source collection failed: {error}", file=sys.stderr)
         return 1
 
     manual_language = choose_caption_track(info.get("subtitles") or {})
     automatic_language = choose_caption_track(info.get("automatic_captions") or {})
-    selected_language, automatic = (manual_language, False) if manual_language else (automatic_language, True)
-    if not selected_language:
-        write_json(source_path, record)
+    tracks: list[tuple[str, str]] = []
+    if manual_language:
+        tracks.append(("human", manual_language))
+    if automatic_language:
+        tracks.append(("automatic", automatic_language))
+    if not tracks:
         print("No Brazilian Portuguese (pt-BR) manual or automatic caption track is available.", file=sys.stderr)
         return 1
 
     try:
-        vtt_path = download_vtt(args.url, directory, record["video_id"], selected_language, automatic)
-        segments = parse_vtt(vtt_path.read_text(encoding="utf-8"), record["video_id"])
-        if not segments:
-            raise CollectorError("the downloaded VTT contains no timestamped text cues")
+        import psycopg
+
+        conninfo = os.getenv(
+            "DATABASE_URL", "host=localhost port=5432 dbname=postgres user=postgres"
+        )
+        with psycopg.connect(conninfo, connect_timeout=5) as conn:
+            existing = conn.execute(
+                "SELECT id FROM youtube_sources WHERE video_id = %s",
+                (record["video_id"],),
+            ).fetchone()
+        if existing and not args.force:
+            print(f"Duplicate video_id {record['video_id']}; use --force to refresh it.", file=sys.stderr)
+            return 0
+    except Exception as error:  # noqa: BLE001 - report database failures to the CLI
+        print(f"PostgreSQL lookup failed; apply the migration first: {error}", file=sys.stderr)
+        return 1
+
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        srt_paths = {
+            track: download_srt(args.url, directory, record["video_id"], language, track)
+            for track, language in tracks
+        }
     except (DownloadError, CollectorError, UnicodeDecodeError) as error:
-        write_json(source_path, record)
         print(f"Caption collection failed: {error}", file=sys.stderr)
         return 1
 
-    record["transcript_source"] = "automatic" if automatic else "human"
-    write_json(source_path, record)
-    write_json(
-        directory / "transcript.json",
-        {
-            "video_id": record["video_id"],
-            "youtube_url": record["youtube_url"],
-            "collected_at": now_iso(),
-            "caption_language": selected_language,
-            "transcript_source": record["transcript_source"],
-            "raw_vtt_file": "transcript.vtt",
-            "raw_vtt_sha256": sha256_file(vtt_path),
-            "segments": segments,
-        },
-    )
-    print(f"Collected {len(segments)} segments for {record['video_id']} in {directory}")
+    try:
+        import boto3
+        from botocore.config import Config
+
+        bucket = args.s3_bucket
+        srt_keys = {
+            track: f"{record['video_id']}/{track}.srt" for track in srt_paths
+        }
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=args.s3_endpoint,
+            aws_access_key_id=args.s3_access_key,
+            aws_secret_access_key=args.s3_secret_key,
+            region_name=args.aws_region,
+            config=Config(s3={"addressing_style": "path"}),
+        )
+        for track, srt_path in srt_paths.items():
+            s3.upload_file(str(srt_path), bucket, srt_keys[track])
+
+        with psycopg.connect(conninfo, connect_timeout=5) as conn:
+            existing = conn.execute(
+                "SELECT id FROM youtube_sources WHERE video_id = %s",
+                (record["video_id"],),
+            ).fetchone()
+            if existing:
+                source_id = existing[0]
+                conn.execute(
+                    """UPDATE youtube_sources SET
+                           youtube_url = %s, title = %s, channel_id = %s,
+                           channel_name = %s, published_at = %s,
+                           duration_seconds = %s, collected_at = %s,
+                           s3_bucket = %s, human_srt_key = %s,
+                           automatic_srt_key = %s
+                       WHERE id = %s""",
+                    (
+                        record["youtube_url"], record["title"], record["channel_id"],
+                        record["channel_name"], record["published_at"],
+                        record["duration_seconds"], record["collected_at"], bucket,
+                        srt_keys.get("human"), srt_keys.get("automatic"), source_id,
+                    ),
+                )
+            else:
+                inserted = conn.execute(
+                    """INSERT INTO youtube_sources (
+                           video_id, youtube_url, title, channel_id, channel_name,
+                           published_at, duration_seconds, collected_at,
+                           s3_bucket, human_srt_key, automatic_srt_key
+                       ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                       RETURNING id""",
+                    (
+                        record["video_id"], record["youtube_url"], record["title"],
+                        record["channel_id"], record["channel_name"],
+                        record["published_at"], record["duration_seconds"],
+                        record["collected_at"], bucket, srt_keys.get("human"),
+                        srt_keys.get("automatic"),
+                    ),
+                ).fetchone()
+                source_id = inserted[0]
+    except Exception as error:  # noqa: BLE001 - report integration failures to the CLI
+        print(f"Storage failed after SRT files were downloaded: {error}", file=sys.stderr)
+        return 1
+
+    print(f"Collected caption tracks for {record['video_id']} in {directory}")
+    for track, key in srt_keys.items():
+        print(f"Stored {track} SRT in s3://{bucket}/{key}")
+    print("Stored video metadata and S3 object keys in PostgreSQL")
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Download one YouTube transcript and write source/transcript records.")
+    parser = argparse.ArgumentParser(
+        description="Download available pt-BR caption tracks and store their S3 keys in PostgreSQL."
+    )
     parser.add_argument("--url", required=True, help="YouTube video URL")
     parser.add_argument("--output-dir", default="data/youtube", help="Output root (default: data/youtube)")
     parser.add_argument("--force", action="store_true", help="Replace records for an already-collected video ID")
+    parser.add_argument(
+        "--s3-endpoint",
+        default=os.getenv("S3_ENDPOINT", "http://localhost:9000"),
+        help="S3-compatible endpoint",
+    )
+    parser.add_argument("--s3-bucket", default=os.getenv("S3_BUCKET", "youtube-transcripts"))
+    parser.add_argument("--s3-access-key", default=os.getenv("S3_ACCESS_KEY", "local"))
+    parser.add_argument(
+        "--s3-secret-key",
+        default=os.getenv("S3_SECRET_KEY", "local-dev-secret-change-me"),
+    )
+    parser.add_argument("--aws-region", default=os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
     return parser
 
 
