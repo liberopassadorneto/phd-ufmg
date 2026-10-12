@@ -1,0 +1,22 @@
+{
+  "model": "SAGESSE-EPFL/Mistral-7b-claims-extraction",
+  "status": "failed",
+  "precision": "offload",
+  "gpu": "NVIDIA GeForce RTX 2080",
+  "inference_seconds": 0.0,
+  "loading_seconds": 7.632,
+  "download_seconds": 1142.827,
+  "total_seconds": 1167.929,
+  "vram_peak_gib": 0.107,
+  "vram_measurement": "NVML process memory",
+  "ram_peak_gib": 0.607,
+  "cpu_average_percent": 70.09,
+  "cpu_peak_percent": 173.5,
+  "cpu_seconds": 14.937,
+  "temporary_storage_peak_gib": 27.004,
+  "temporary_storage_location": "tmpfs",
+  "temporary_weights_removed": true,
+  "output_bytes": 0,
+  "output_valid_json": false,
+  "error": "\n requires the protobuf library but it was not found in your environment. Check out the instructions on the\ninstallation page of its repo: https://github.com/protocolbuffers/protobuf/tree/master/python#installation and follow the ones\nthat match your environment. Please note that you may need to restart your runtime after installation.\n"
+}
