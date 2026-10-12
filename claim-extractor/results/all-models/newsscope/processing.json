@@ -1,0 +1,22 @@
+{
+  "model": "nidhipandya/NewsScope-lora",
+  "status": "failed",
+  "precision": "offload",
+  "gpu": "NVIDIA GeForce RTX 2080",
+  "inference_seconds": 0.0,
+  "loading_seconds": 63.207,
+  "download_seconds": 656.358,
+  "total_seconds": 734.218,
+  "vram_peak_gib": 6.795,
+  "vram_measurement": "NVML process memory",
+  "ram_peak_gib": 19.125,
+  "cpu_average_percent": 135.78,
+  "cpu_peak_percent": 686.8,
+  "cpu_seconds": 99.311,
+  "temporary_storage_peak_gib": 15.139,
+  "temporary_storage_location": "disk",
+  "temporary_weights_removed": true,
+  "output_bytes": 0,
+  "output_valid_json": false,
+  "error": "Cannot copy out of meta tensor; no data!"
+}

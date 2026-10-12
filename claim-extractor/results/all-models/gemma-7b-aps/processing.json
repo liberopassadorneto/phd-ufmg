@@ -1,0 +1,23 @@
+{
+  "model": "google/gemma-7b-aps-it",
+  "status": "success",
+  "precision": "nf4",
+  "gpu": "NVIDIA GeForce RTX 2080",
+  "inference_seconds": 99.1,
+  "loading_seconds": 32.342,
+  "download_seconds": 680.856,
+  "total_seconds": 828.627,
+  "vram_peak_gib": 5.721,
+  "vram_measurement": "NVML process memory",
+  "ram_peak_gib": 7.352,
+  "cpu_average_percent": 98.58,
+  "cpu_peak_percent": 152.0,
+  "cpu_seconds": 134.858,
+  "temporary_storage_peak_gib": 15.923,
+  "temporary_storage_location": "disk",
+  "temporary_weights_removed": true,
+  "output_bytes": 3085,
+  "max_new_tokens": 4096,
+  "context_tokens": 8192,
+  "chunks_processed": 7
+}

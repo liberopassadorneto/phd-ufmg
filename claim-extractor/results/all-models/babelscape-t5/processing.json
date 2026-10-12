@@ -1,0 +1,21 @@
+{
+  "model": "Babelscape/t5-base-summarization-claim-extractor",
+  "status": "failed",
+  "precision": "fp32",
+  "gpu": "NVIDIA GeForce RTX 2080",
+  "inference_seconds": 0.0,
+  "loading_seconds": 4.189,
+  "download_seconds": 41.102,
+  "total_seconds": 50.987,
+  "vram_peak_gib": 0.107,
+  "vram_measurement": "NVML process memory",
+  "ram_peak_gib": 0.626,
+  "cpu_average_percent": 83.93,
+  "cpu_peak_percent": 173.6,
+  "cpu_seconds": 7.885,
+  "temporary_storage_peak_gib": 0.831,
+  "temporary_storage_location": "disk",
+  "temporary_weights_removed": true,
+  "output_bytes": 0,
+  "error": "\n requires the protobuf library but it was not found in your environment. Check out the instructions on the\ninstallation page of its repo: https://github.com/protocolbuffers/protobuf/tree/master/python#installation and follow the ones\nthat match your environment. Please note that you may need to restart your runtime after installation.\n"
+}
