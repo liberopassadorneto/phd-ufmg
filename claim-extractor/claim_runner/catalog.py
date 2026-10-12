@@ -10,7 +10,6 @@ class ModelSpec:
     adapter: str
     parameters_b: float
     precision: str = "fp16"
-    runtime: str = "classic"
     language: str = "en"
     max_new_tokens: int = 4096
     task: str = "generative_claim_extraction"
@@ -20,8 +19,13 @@ class ModelSpec:
     note: str = ""
     smaller: str | None = None
 
+    @property
+    def runtime(self) -> str:
+        return self.alias
+
     def record(self):
-        return {**asdict(self), "model_card": f"https://huggingface.co/{self.repo}"}
+        return {**asdict(self), "runtime": self.runtime,
+                "model_card": f"https://huggingface.co/{self.repo}"}
 
 
 MODELS = (
@@ -47,11 +51,11 @@ MODELS = (
               precision="fp32", language="pt", task="claim_span_identification",
               note="Token logits, not generative atomic claims; 512 tokens, stride 128."),
     ModelSpec("principled-4b", "principled-intelligence/claim-extractor-4B-q-2605",
-              "principled", 4.66, precision="nf4", runtime="modern", max_new_tokens=8192,
+              "principled", 4.66, precision="nf4", max_new_tokens=8192,
               reference="https://github.com/Principled-Intelligence/orbitals",
               smaller="principled-2b", note="Orbitals prompt; no fabricated service description or evidence."),
     ModelSpec("principled-2b", "principled-intelligence/claim-extractor-2B-q-2605",
-              "principled", 2.27, runtime="modern", max_new_tokens=8192,
+              "principled", 2.27, max_new_tokens=8192,
               reference="https://github.com/Principled-Intelligence/orbitals"),
     ModelSpec("dongyru-mistral", "dongyru/Mistral-7B-Claim-Extractor",
               "generic", 7.24, precision="nf4",

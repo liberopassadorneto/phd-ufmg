@@ -140,7 +140,28 @@ Override the ceiling with **--context-tokens** and the output budget with
 ## Server resources
 
 Defaults target the dual Xeon E5620, RTX 2080 with 8 GB VRAM, Python 3.10 and
-PyTorch 2.6.0/CUDA 12.4. Classic and Qwen3.5 models have separate uv runtimes.
+PyTorch 2.6.0/CUDA 12.4. Each model has its own uv project, lockfile and virtual
+environment in `runtimes/<model-alias>/`. The runner automatically runs
+`uv sync --frozen` only for selected models before starting their workers.
+
+All runtimes pin the same PyTorch/CUDA versions. Principled models use
+Transformers 5.5.0 and Orbitals; other models use Transformers 4.57.6.
+Only NewsScope includes PEFT. Gemma, T5 and Mistral runtimes include SentencePiece
+and protobuf for tokenizer conversion. Package versions can be changed for one
+model without affecting another model's lockfile.
+
+To prepare one environment manually:
+
+~~~bash
+uv sync --frozen --project runtimes/babelscape-t5 --python 3.10
+~~~
+
+uv reuses its package cache across these environments. On Linux it normally
+hardlinks cached packages when the cache and environments share a filesystem;
+on different filesystems it may copy them and require more disk space. Keep the
+cache on the same filesystem as `runtimes/` to reuse the large Torch/CUDA files.
+Existing `runtimes/classic/.venv` and `runtimes/modern/.venv` environments are no
+longer used; they can be removed after an ongoing benchmark has finished.
 
 Weights are downloaded directly from Hugging Face, loaded in an isolated process,
 and removed before the next checkpoint. Larger models first try NF4 on the GPU.

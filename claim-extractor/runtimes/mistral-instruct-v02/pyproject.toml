@@ -1,5 +1,5 @@
 [project]
-name = "claim-extractor-classic-runtime"
+name = "claim-extractor-mistral-instruct-v02-runtime"
 version = "0.1.0"
 requires-python = ">=3.10,<3.13"
 dependencies = [
@@ -7,9 +7,9 @@ dependencies = [
   "transformers==4.57.6",
   "accelerate==1.11.0",
   "bitsandbytes==0.46.1",
-  "peft==0.18.0",
-  "sentencepiece==0.2.1",
   "numpy==1.26.4",
+  "sentencepiece==0.2.1",
+  "protobuf==5.29.5",
 ]
 
 [tool.uv]
