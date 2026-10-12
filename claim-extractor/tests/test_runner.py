@@ -10,16 +10,40 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from claim_runner.catalog import MODELS, select_models
-from claim_runner.inputs import read_aps, read_transcript, split_text
+from claim_runner.inputs import fit_aps, read_aps, read_transcript, split_text
 from claim_runner.resources import (GIB, choose_staging, cleanup_staging, create_staging,
                                     directory_size)
-from claim_runner.worker import parse_generation, render_prompt
+from claim_runner.worker import render_prompt
+from claim_runner.outputs import write_outputs, processing
 import run_models
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class InputTests(unittest.TestCase):
+    def test_oversized_aps_sentence_is_split_without_dropping_transcript_text(self):
+        sentence = "Long subtitle without punctuation " * 50
+        records = [{"chunk_id": "original", "sentences": [sentence],
+                    "messages": [{"role": "user", "content": f"<s> {sentence} </s>"}]}]
+        chunks = fit_aps(records, lambda messages: len(messages[0]["content"]) <= 100)
+        self.assertGreater(len(chunks), 1)
+        self.assertEqual("".join(s for c in chunks for s in c["sentences"]), sentence)
+        self.assertTrue(all(len(c["messages"][0]["content"]) <= 100 for c in chunks))
+
+    def test_frozen_aps_prompts_are_unchanged_when_they_fit(self):
+        english = read_transcript(ROOT / "automatic.en.txt")["text"]
+        records = read_aps(ROOT / "automatic.en.aps-input.jsonl", english)["records"]
+        self.assertEqual(fit_aps(records, lambda messages: True), records)
+
+    def test_input_alias_accepts_english_video_srt(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "video.en.srt"
+            source.write_text("1\n00:00:00,000 --> 00:00:03,000\nThe treatment reduces appetite.\n")
+            args = run_models.parse_args(["--models", "detective-qwen3b", "--input", str(source)])
+            inputs, aps = run_models.prepare_inputs(args)
+            self.assertEqual(inputs["en"]["text"], "The treatment reduces appetite.")
+            self.assertIsNone(aps)
+
     def test_frozen_translation_matches_all_seven_chunks(self):
         english = read_transcript(ROOT / "automatic.en.txt")
         aps = read_aps(ROOT / "automatic.en.aps-input.jsonl", english["text"])
@@ -54,6 +78,10 @@ class InputTests(unittest.TestCase):
 
 
 class CatalogTests(unittest.TestCase):
+    def test_small_extractors_have_enough_output_budget_for_full_transcript_json(self):
+        args = run_models.parse_args(["--models", "gemma-2b-aps,detective-qwen3b"])
+        self.assertTrue(all(model.max_new_tokens >= 4096 for model in args.selected))
+        self.assertGreater(args.context_tokens, max(model.max_new_tokens for model in args.selected))
     def test_all_twelve_checkpoint_ids_come_from_document(self):
         document = (ROOT / "knowledge-base/all_models.md").read_text()
         self.assertEqual(len(select_models("all")), 12)
@@ -128,16 +156,46 @@ class CleanupTests(unittest.TestCase):
 
 
 class OutputTests(unittest.TestCase):
-    def test_invalid_json_is_an_explicit_parse_error(self):
-        self.assertIn("parse_error", parse_generation("detective", '{"claims": ['))
-        self.assertNotIn("value", parse_generation("detective", '{"claims": ['))
+    def test_json_output_is_the_unmodified_model_response(self):
+        with tempfile.TemporaryDirectory() as folder:
+            raw = '{  "claims": ["Drug A."] }'
+            paths = write_outputs(Path(folder), "detective", [raw])
+            self.assertEqual([p.name for p in paths], ["output.json"])
+            self.assertEqual(paths[0].read_text(), raw)
 
-    def test_empty_claims_are_valid_json_output(self):
-        self.assertEqual(parse_generation("generic", '{"claims": []}'), {"value": {"claims": []}})
+    def test_partial_json_is_preserved_without_repair(self):
+        with tempfile.TemporaryDirectory() as folder:
+            raw = '{"claims": ['
+            paths = write_outputs(Path(folder), "detective", [raw])
+            self.assertEqual(paths[0].read_text(), raw)
+            record = {"model": {"repo": "example", "adapter": "detective"}, "status": "partial",
+                      "attempts": [{"mode": "fp16", "worker": {"truncated_chunks": 1},
+                                    "resources": {}}]}
+            report = processing(record, paths)
+            self.assertFalse(report["output_valid_json"])
+            self.assertIn("incomplete", report["warning"])
 
-    def test_aps_groups_keep_model_propositions(self):
-        self.assertEqual(parse_generation("aps", "PROPOSITIONS:\n<s>\n- A.\n- B.\n</s>"),
-                         {"groups": [["A.", "B."]]})
+    def test_aps_retains_all_raw_chunks_in_order_without_txt(self):
+        with tempfile.TemporaryDirectory() as folder:
+            blocks = ["PROPOSITIONS:\n<s>\n- A.\n</s>", "PROPOSITIONS:\n<s>\n- B.\n</s>"]
+            paths = write_outputs(Path(folder), "aps", blocks)
+            self.assertEqual([p.name for p in paths], ["output.raw"])
+            self.assertEqual(paths[0].read_text(), "\n\n".join(blocks))
+
+    def test_json_chunks_keep_each_native_object_in_its_own_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            blocks = ['{"claims": ["A"]}', '{"claims": ["B"]}']
+            paths = write_outputs(Path(folder), "detective", blocks)
+            self.assertEqual([p.name for p in paths], ["output-001.json", "output-002.json"])
+            self.assertEqual([p.read_text() for p in paths], blocks)
+
+    def test_broken_nvml_measurement_does_not_report_zero_vram(self):
+        record = {"model": {"repo": "example", "adapter": "aps"}, "status": "success",
+                  "attempts": [{"mode": "fp16", "worker": {"torch_load_peak_allocated_bytes": 5 * GIB},
+                                "resources": {"gpu_process_vram_peak_bytes": 0}}]}
+        report = processing(record, [])
+        self.assertEqual(report["vram_peak_gib"], 5)
+        self.assertEqual(report["vram_measurement"], "PyTorch allocated memory")
 
     def test_sagesse_uses_published_template_and_empty_context(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -151,6 +209,33 @@ class OutputTests(unittest.TestCase):
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_public_results_contain_only_native_output_and_processing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            output = root / "results"
+
+            def fake_run(args, spec, run_dir, *_args):
+                attempt = run_dir / spec.alias / "attempt"
+                attempt.mkdir(parents=True)
+                write_outputs(attempt, spec.adapter, ["PROPOSITIONS:\n<s>\n- A.\n</s>"
+                              if spec.adapter == "aps" else '{"claims": ["A"]}'])
+                return {"alias": spec.alias, "model": spec.record(), "status": "success",
+                        "selected_attempt": str(attempt), "attempts": [{
+                            "directory": str(attempt), "mode": "fp16", "worker": {
+                                "inference_seconds": 1.5, "gpu": "test GPU",
+                                "torch_load_peak_allocated_bytes": GIB}, "resources": {}}]}
+
+            with patch.object(run_models, "run_one", side_effect=fake_run), \
+                 patch.object(run_models.signal, "signal"):
+                code = run_models.main(["--models", "gemma-2b-aps,detective-qwen3b",
+                                        "--output-dir", str(output),
+                                        "--staging-dir", str(root / "temporary")])
+            self.assertEqual(code, 0)
+            self.assertEqual(sorted(str(p.relative_to(output)) for p in output.rglob("*") if p.is_file()),
+                             ["detective-qwen3b/output.json", "detective-qwen3b/processing.json",
+                              "gemma-2b-aps/output.raw", "gemma-2b-aps/processing.json"])
+            self.assertEqual(list((root / "temporary").iterdir()), [])
+
     def _run_with_fake_failure(self, folder, failure=None, retry=False):
         args = run_models.parse_args(["--models", "gemma-2b-aps", "--staging-dir", str(folder / "staging")])
         inputs, aps = run_models.prepare_inputs(args)
@@ -200,7 +285,6 @@ class SupervisorTests(unittest.TestCase):
                 self.assertTrue(result["staging_removed"])
                 self.assertEqual(result["status"], "interrupted" if isinstance(failure, KeyboardInterrupt) else "failed")
                 self.assertEqual(calls, [])
-                self.assertTrue((Path(folder) / "gemma-2b-aps/result.json").is_file())
 
     def test_oom_retries_in_new_attempt_without_overwriting_first(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -1,0 +1,103 @@
+PROPOSITIONS:
+<s>
+- Weight-loss pens.
+</s>
+<s>
+- Have you ever used one?
+- Do you know someone who has used one?
+</s>
+<s>
+- Today, more than half of Brazilians are overweight.
+- Today, more than half of Brazilians have an associated comorbidity.
+- Around 20% of Brazilians are already in the obesity range.
+</s>
+
+PROPOSITIONS:
+<s>
+- These medications are intended precisely for these people.
+- These medications are commonly known as weight-loss pens.
+</s>
+<s>
+- Three of these medications are approved in Brazil.
+- liraglutide is approved in Brazil.
+- sold under the brand name Saxenda.
+- semaglutide is approved in Brazil.
+- known as Wegovy.
+- known as Ozempic.
+- tirzepatide is approved in Brazil.
+- sold as Mounjaro.
+</s>
+<s>
+- When you gain weight, your body does everything it can to maintain the weight you have gained.
+</s>
+
+PROPOSITIONS:
+<s>
+- It does not matter how much you exercise.
+- It does not matter how little you eat.
+</s>
+<s>
+- When you take the medication, you feel less hungry.
+- When you take the medication, you become full more quickly.
+</s>
+<s>
+- The medication is like a kick-start.
+- The treatment is much more complex than that.
+</s>
+
+PROPOSITIONS:
+<s>
+- The problem is that medication alone is not enough.
+</s>
+<s>
+- You need to change your lifestyle as a whole.
+- You need to adjust your diet.
+- You need to exercise.
+</s>
+<s>
+- After all, obesity is a chronic disease.
+- obesity is like diabetes.
+- obesity is like hypertension.
+</s>
+
+PROPOSITIONS:
+<s>
+- Even after losing weight, you will not be cured.
+- Even after losing weight, you may regain weight at any time.
+</s>
+<s>
+- The assessment of which medication is most appropriate for your case must be individualized.
+- The assessment of which medication is most appropriate for your case must be performed by a physician.
+</s>
+<s>
+- These medications are sold only with a prescription.
+- These medications are sold to protect your health.
+</s>
+
+PROPOSITIONS:
+<s>
+- Improper use can cause adverse effects.
+- Improper use without medical guidance can cause adverse effects.
+</s>
+<s>
+- People who seek treatment on their own may experience unpleasant side effects.
+- People who seek treatment on their own may experience drug interactions.
+- People who seek treatment on their own may experience excessive loss of muscle mass.
+- People who seek treatment on their own may experience hair loss.
+- People who seek treatment on their own may experience brittle nails.
+- People who seek treatment on their own may experience malnutrition.
+- People who seek treatment on their own may experience pancreatic toxicity.
+- People who seek treatment on their own may experience the risk of obtaining counterfeit medications.
+</s>
+<s>
+- In the long term, you may lose weight.
+- In the long term, you may lose your health.
+</s>
+
+PROPOSITIONS:
+<s>
+- These medications can help people who need them.
+- The goal is not to help you lose a few pounds for aesthetic reasons.
+- The goal is to restore health.
+- The goal is to restore quality of life.
+</s>

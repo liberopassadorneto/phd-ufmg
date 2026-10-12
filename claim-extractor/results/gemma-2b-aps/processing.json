@@ -1,0 +1,22 @@
+{
+  "model": "google/gemma-2b-aps-it",
+  "status": "success",
+  "precision": "fp16",
+  "gpu": "NVIDIA GeForce RTX 2080",
+  "inference_seconds": 44.381,
+  "loading_seconds": 13.281,
+  "download_seconds": 212.714,
+  "total_seconds": 284.695,
+  "vram_peak_gib": 4.731,
+  "vram_measurement": "PyTorch allocated memory",
+  "ram_peak_gib": 5.346,
+  "cpu_average_percent": 91.88,
+  "cpu_peak_percent": 150.1,
+  "cpu_seconds": 59.128,
+  "temporary_storage_peak_gib": 4.688,
+  "temporary_storage_location": "disk",
+  "temporary_weights_removed": true,
+  "output_bytes": 3018,
+  "max_new_tokens": 512,
+  "context_tokens": 8192
+}

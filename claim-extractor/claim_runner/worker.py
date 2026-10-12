@@ -1,7 +1,6 @@
 """Isolated CUDA worker. Invoked by run_models.py in the selected uv runtime."""
 
 import argparse
-import hashlib
 import importlib.metadata
 import json
 import os
@@ -12,8 +11,9 @@ import time
 import traceback
 from pathlib import Path
 
-from .inputs import split_text
+from .inputs import fit_aps, split_text
 from .resources import GIB, write_json
+from .outputs import write_outputs
 
 
 def probe(quantized: bool, destination: Path) -> int:
@@ -141,36 +141,12 @@ def load_model(job):
     return model, tokenizer
 
 
-def parse_generation(kind, text):
-    if kind == "aps":
-        groups = re.findall(r"<s>(.*?)</s>", text, flags=re.S)
-        return {"groups": [[line.strip().removeprefix("- ").strip() for line in group.splitlines()
-                             if line.strip()] for group in groups]} if groups else {
-            "parse_error": "No APS output groups"}
-    if kind in ("t5", "fc_t5"):
-        return {"text": text}
-    candidate = text.strip()
-    if candidate.startswith(chr(96) * 3):
-        lines = candidate.splitlines()
-        candidate = "\n".join(lines[1:-1] if lines[-1].strip() == chr(96) * 3 else lines[1:])
-    try:
-        return {"value": json.loads(candidate)}
-    except ValueError as exc:
-        return {"parse_error": str(exc)}
-
-
-def append_jsonl(stream, record):
-    stream.write(json.dumps(record, ensure_ascii=False) + "\n")
-    stream.flush()
-    os.fsync(stream.fileno())
-
-
 def run(job_path: Path) -> int:
     job = json.loads(job_path.read_text(encoding="utf-8"))
     out = Path(job["output"])
     spec = job["spec"]
     result = {"status": "running", "mode": job["mode"], "chunks_completed": 0,
-              "inference_seconds": 0.0, "parse_errors": 0, "truncated_chunks": 0}
+              "inference_seconds": 0.0, "truncated_chunks": 0}
     started = time.perf_counter()
     phase = "loading"
     load_started = None
@@ -224,17 +200,12 @@ def run(job_path: Path) -> int:
         is_seq2seq = kind in ("t5", "fc_t5")
         maximum = job["max_new_tokens"] or spec["max_new_tokens"]
         limit = context_limit(tokenizer, model, job["context_tokens"], is_seq2seq)
+        result["max_new_tokens"] = maximum if kind != "claimpt" else None
+        result["context_tokens"] = limit
         effective_limit = limit if is_seq2seq or kind == "claimpt" else limit - maximum
         if effective_limit < 1:
             raise ValueError(f"Context budget {limit} must exceed output reservation {maximum}; "
                              "increase --context-tokens or reduce --max-new-tokens")
-        config = {"mode": job["mode"], "seed": job["seed"], "input_context_limit": limit,
-                  "max_new_tokens": maximum, "do_sample": kind == "newsscope",
-                  "cpu_threads": job["cpu_threads"], "prompt_source": spec["reference"] or spec["model_card"],
-                  "source_input": job["input"], "spec": spec, "repositories": job["repositories"],
-                  "note": spec["note"], "attention": getattr(model.config, "_attn_implementation", None),
-                  "thinking": False if kind == "principled" else None}
-        write_json(out / "configuration.json", config)
         if kind == "claimpt":
             if min(limit, 512) <= 128 + tokenizer.num_special_tokens_to_add(pair=False):
                 raise ValueError("ClaimPT context must accommodate its 128-token overlap")
@@ -244,96 +215,73 @@ def run(job_path: Path) -> int:
             chunks = [{"chunk_id": f"chunk_{i + 1:04d}", "window_index": i}
                       for i in range(len(enc["input_ids"]))]
         elif kind == "aps":
-            chunks = job["aps"]["records"]
+            chunks = fit_aps(job["aps"]["records"], lambda messages: len(tokenizer(
+                tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True),
+                add_special_tokens=False)["input_ids"]) <= effective_limit)
         else:
             transformed = fc_preprocess(source) if kind == "fc_t5" else source
             if not transformed:
                 raise ValueError("Input became empty after model-specific preprocessing")
-            config["preprocessed_text"] = transformed
-            config["preprocessed_sha256"] = hashlib.sha256(transformed.encode()).hexdigest()
-            write_json(out / "configuration.json", config)
             chunks = split_text(transformed,
                 lambda text: len(tokenizer(render_prompt(spec, tokenizer, text, model_path))["input_ids"]) <= effective_limit,
                 max_characters=4000 if kind == "detective" else None)
         result["chunks_expected"] = len(chunks)
         save()
-        with (out / "effective-inputs.jsonl").open("w", encoding="utf-8") as inputs_stream, \
-             (out / "raw.jsonl").open("w", encoding="utf-8") as raw_stream, \
-             (out / "parsed.jsonl").open("w", encoding="utf-8") as parsed_stream:
-            for chunk in chunks:
-                chunk_id = chunk["chunk_id"]
-                print(f"{spec['alias']}: {chunk_id}/{len(chunks)} ({job['mode']})", flush=True)
+        blocks = []
+        for chunk in chunks:
+            chunk_id = chunk["chunk_id"]
+            print(f"{spec['alias']}: {chunk_id}/{len(chunks)} ({job['mode']})", flush=True)
+            if kind == "claimpt":
+                i = chunk["window_index"]
+                inputs = {key: value[i:i + 1].to("cuda")
+                          for key, value in enc.items() if key in tokenizer.model_input_names}
+            else:
+                prompt = (tokenizer.apply_chat_template(chunk["messages"], tokenize=False,
+                          add_generation_prompt=True) if kind == "aps" else
+                          render_prompt(spec, tokenizer, chunk["text"], model_path))
+                inputs = tokenizer(prompt, return_tensors="pt", add_special_tokens=kind not in (
+                    "aps", "detective", "generic", "principled"))
+                if inputs["input_ids"].shape[1] > effective_limit:
+                    raise ValueError(f"{chunk_id}: rendered prompt exceeds context budget; no truncation performed")
+                inputs = {key: value.to("cuda") for key, value in inputs.items()}
+            set_phase("inference")
+            torch.cuda.synchronize()
+            inference_started = time.perf_counter()
+            with torch.inference_mode():
                 if kind == "claimpt":
-                    i = chunk["window_index"]
-                    inputs = {key: value[i:i + 1].to("cuda")
-                              for key, value in enc.items() if key in tokenizer.model_input_names}
-                    input_record = {**chunk, "input_ids": inputs["input_ids"][0].tolist(),
-                                    "offset_mapping": enc["offset_mapping"][i].tolist(),
-                                    "language": spec["language"]}
+                    logits = model(**inputs).logits
                 else:
-                    prompt = (tokenizer.apply_chat_template(chunk["messages"], tokenize=False,
-                              add_generation_prompt=True) if kind == "aps" else
-                              render_prompt(spec, tokenizer, chunk["text"], model_path))
-                    inputs = tokenizer(prompt, return_tensors="pt", add_special_tokens=kind not in (
-                        "aps", "detective", "generic", "principled"))
-                    if inputs["input_ids"].shape[1] > effective_limit:
-                        raise ValueError(f"{chunk_id}: rendered prompt exceeds context budget; no truncation performed")
-                    input_record = {**chunk, "prompt": prompt, "input_ids": inputs["input_ids"][0].tolist(),
-                                    "language": spec["language"]}
-                    inputs = {key: value.to("cuda") for key, value in inputs.items()}
-                append_jsonl(inputs_stream, input_record)
-                set_phase("inference")
-                torch.cuda.synchronize()
-                before = time.perf_counter()
-                inference_started = before
-                with torch.inference_mode():
-                    if kind == "claimpt":
-                        logits = model(**inputs).logits
-                    else:
-                        kwargs = {"do_sample": kind == "newsscope", "max_new_tokens": maximum}
-                        if kind == "newsscope":
-                            kwargs["temperature"] = 0.3
-                        if kind == "fc_t5":
-                            kwargs.update(num_beams=6, no_repeat_ngram_size=2,
-                                          min_length=5, early_stopping=True)
-                        if tokenizer.eos_token_id is not None and tokenizer.pad_token_id is None:
-                            kwargs["pad_token_id"] = tokenizer.eos_token_id
-                        generated = model.generate(**inputs, **kwargs)
-                torch.cuda.synchronize()
-                seconds = time.perf_counter() - before
-                inference_started = None
-                result["inference_seconds"] += seconds
-                if kind == "claimpt":
-                    import numpy as np
-                    filename = f"{chunk_id}.logits.npz"
-                    np.savez_compressed(out / filename, logits=logits.float().cpu().numpy(),
-                                        input_ids=inputs["input_ids"].cpu().numpy(),
-                                        offsets=enc["offset_mapping"][chunk["window_index"]].numpy())
-                    ids = logits.argmax(dim=-1)[0].tolist()
-                    raw = {"chunk_id": chunk_id, "logits_file": filename, "label_ids": ids,
-                           "id2label": model.config.id2label, "inference_seconds": seconds}
-                    parsed = {"chunk_id": chunk_id, "predicted_labels": [
-                        model.config.id2label[label] for label in ids]}
-                else:
-                    new_ids = generated[0] if is_seq2seq else generated[0, inputs["input_ids"].shape[1]:]
-                    ids = new_ids.tolist()
-                    text = tokenizer.decode(ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
-                    raw_text = tokenizer.decode(ids, skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    eos = model.generation_config.eos_token_id or tokenizer.eos_token_id
-                    eos = eos if isinstance(eos, list) else [eos]
-                    reached_limit = len(ids) >= maximum and (not ids or ids[-1] not in eos)
-                    raw = {"chunk_id": chunk_id, "generated_text": text, "raw_decoded_text": raw_text,
-                           "generated_token_ids": ids, "inference_seconds": seconds,
-                           "output_limit_reached": reached_limit}
-                    parsed = {"chunk_id": chunk_id, **parse_generation(kind, text)}
-                    result["truncated_chunks"] += int(reached_limit)
-                    result["parse_errors"] += int("parse_error" in parsed)
-                append_jsonl(raw_stream, raw)
-                append_jsonl(parsed_stream, parsed)
-                result["chunks_completed"] += 1
-                result["torch_inference_peak_allocated_bytes"] = torch.cuda.max_memory_allocated(0)
-                result["torch_inference_peak_reserved_bytes"] = torch.cuda.max_memory_reserved(0)
-                save()
+                    kwargs = {"do_sample": kind == "newsscope", "max_new_tokens": maximum}
+                    if kind == "newsscope":
+                        kwargs["temperature"] = 0.3
+                    if kind == "fc_t5":
+                        kwargs.update(num_beams=6, no_repeat_ngram_size=2,
+                                      min_length=5, early_stopping=True)
+                    if tokenizer.eos_token_id is not None and tokenizer.pad_token_id is None:
+                        kwargs["pad_token_id"] = tokenizer.eos_token_id
+                    generated = model.generate(**inputs, **kwargs)
+            torch.cuda.synchronize()
+            result["inference_seconds"] += time.perf_counter() - inference_started
+            inference_started = None
+            if kind == "claimpt":
+                # BERT's native output is token logits, not generated claims.
+                text = json.dumps({"logits": logits.float().cpu().tolist(),
+                                   "input_ids": inputs["input_ids"].cpu().tolist(),
+                                   "offsets": enc["offset_mapping"][chunk["window_index"]].tolist()},
+                                  ensure_ascii=False)
+            else:
+                new_ids = generated[0] if is_seq2seq else generated[0, inputs["input_ids"].shape[1]:]
+                ids = new_ids.tolist()
+                text = tokenizer.decode(ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+                eos = model.generation_config.eos_token_id or tokenizer.eos_token_id
+                eos = eos if isinstance(eos, list) else [eos]
+                result["truncated_chunks"] += int(len(ids) >= maximum and (not ids or ids[-1] not in eos))
+            blocks.append(text)
+            write_outputs(out, kind, blocks, chunk_count=len(chunks))
+            result["chunks_completed"] += 1
+            result["torch_inference_peak_allocated_bytes"] = torch.cuda.max_memory_allocated(0)
+            result["torch_inference_peak_reserved_bytes"] = torch.cuda.max_memory_reserved(0)
+            save()
         result["status"] = "partial" if result["truncated_chunks"] else "success"
         set_phase("finished")
         save()

@@ -112,3 +112,28 @@ def split_text(text: str, fits, max_characters: int | None = None) -> list[dict]
                        "source_start": start, "source_end": start + size})
         start += size
     return result
+
+
+def fit_aps(records: list[dict], fits) -> list[dict]:
+    """Keep frozen prompts when they fit; split oversized sentences without loss."""
+    chunks = []
+
+    def messages(sentences):
+        return [{"role": "user", "content": "\n".join(f"<s> {s} </s>" for s in sentences)}]
+
+    for record in records:
+        if fits(record["messages"]):
+            chunks.append(record)
+            continue
+        batch = []
+        for sentence in record["sentences"]:
+            parts = split_text(sentence, lambda part: fits(messages([part])))
+            for part in parts:
+                text = part["text"]
+                if batch and not fits(messages(batch + [text])):
+                    chunks.append({"messages": messages(batch), "sentences": batch})
+                    batch = []
+                batch.append(text)
+        if batch:
+            chunks.append({"messages": messages(batch), "sentences": batch})
+    return [{**chunk, "chunk_id": f"chunk_{index:04d}"} for index, chunk in enumerate(chunks, 1)]

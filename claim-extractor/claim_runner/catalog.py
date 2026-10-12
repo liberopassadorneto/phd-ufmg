@@ -12,7 +12,7 @@ class ModelSpec:
     precision: str = "fp16"
     runtime: str = "classic"
     language: str = "en"
-    max_new_tokens: int = 2048
+    max_new_tokens: int = 4096
     task: str = "generative_claim_extraction"
     base_repo: str | None = None
     revision: str | None = None
@@ -26,41 +26,41 @@ class ModelSpec:
 
 MODELS = (
     ModelSpec("gemma-2b-aps", "google/gemma-2b-aps-it", "aps", 2.51,
-              max_new_tokens=512, task="abstractive_proposition_segmentation",
+              max_new_tokens=4096, task="abstractive_proposition_segmentation",
               revision="6526315a71d38bfbde56357466ddcc27629cfd78"),
     ModelSpec("gemma-7b-aps", "google/gemma-7b-aps-it", "aps", 8.54,
-              precision="nf4", max_new_tokens=512,
+              precision="nf4", max_new_tokens=4096,
               task="abstractive_proposition_segmentation", smaller="gemma-2b-aps"),
     ModelSpec("detective-qwen3b", "Luimas/claim-extractor-detective-qwen3b",
-              "detective", 3.09, max_new_tokens=768,
+              "detective", 3.09, max_new_tokens=4096,
               note="Official Transformers prompt; JSON validity is not guaranteed without GBNF."),
     ModelSpec("newsscope", "nidhipandya/NewsScope-lora", "newsscope", 8.03,
-              precision="nf4", max_new_tokens=2000,
+              precision="nf4", max_new_tokens=4096,
               base_repo="meta-llama/Meta-Llama-3.1-8B-Instruct",
               reference="https://github.com/nidhip1611/NewsScope",
               note="PEFT adapter plus licensed Llama base; article input, usually 2–3 claims."),
     ModelSpec("babelscape-t5", "Babelscape/t5-base-summarization-claim-extractor",
-              "t5", 0.223, precision="fp32", max_new_tokens=512,
+              "t5", 0.223, precision="fp32", max_new_tokens=1024,
               reference="https://github.com/Babelscape/FENICE",
               note="Trained on summaries; supplied transcript is not automatically summarized."),
     ModelSpec("claimpt", "lfcc/bert-claimpt-chunk", "claimpt", 0.109,
               precision="fp32", language="pt", task="claim_span_identification",
               note="Token logits, not generative atomic claims; 512 tokens, stride 128."),
     ModelSpec("principled-4b", "principled-intelligence/claim-extractor-4B-q-2605",
-              "principled", 4.66, precision="nf4", runtime="modern", max_new_tokens=4096,
+              "principled", 4.66, precision="nf4", runtime="modern", max_new_tokens=8192,
               reference="https://github.com/Principled-Intelligence/orbitals",
               smaller="principled-2b", note="Orbitals prompt; no fabricated service description or evidence."),
     ModelSpec("principled-2b", "principled-intelligence/claim-extractor-2B-q-2605",
-              "principled", 2.27, runtime="modern", max_new_tokens=4096,
+              "principled", 2.27, runtime="modern", max_new_tokens=8192,
               reference="https://github.com/Principled-Intelligence/orbitals"),
     ModelSpec("dongyru-mistral", "dongyru/Mistral-7B-Claim-Extractor",
               "generic", 7.24, precision="nf4",
               note="Empty model card: benchmark-authored extraction prompt; author protocol unknown."),
     ModelSpec("fc-claim-det-t5", "varadhbhatnagar/fc-claim-det-T5-base",
-              "fc_t5", 0.223, precision="fp32", max_new_tokens=15,
+              "fc_t5", 0.223, precision="fp32", max_new_tokens=256,
               task="claim_normalization_summarization",
               reference="https://github.com/varadhbhatnagar/FC-Claim-Det",
-              note="P-MRR-HRR preprocessing; source decoding uses six beams and length 5–15."),
+              note="P-MRR-HRR preprocessing and six beams; output budget extended for transcripts beyond the author's 5–15-token example."),
     ModelSpec("sagesse-mistral", "SAGESSE-EPFL/Mistral-7b-claims-extraction",
               "sagesse", 7.25, precision="nf4",
               note="Official Reddit template with empty submission/parent context; source weights are FP32."),

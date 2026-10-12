@@ -1,6 +1,0 @@
-warning: `VIRTUAL_ENV=.venv` does not match the project environment path `runtimes/classic/.venv` and will be ignored; use `--active` to target the active environment instead
-The tokenizer you are loading from '/home/libero_neto/phd-ufmg/claim-extractor/.model-staging/claim-model-f3kbyxin/repository-0' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
-`torch_dtype` is deprecated! Use `dtype` instead!
-Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:01<00:01,  1.64s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:02<00:00,  1.20s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:02<00:00,  1.27s/it]
-detective-qwen3b: chunk_0001/1 (fp16)
-The following generation flags are not valid and may be ignored: ['temperature', 'top_p', 'top_k']. Set `TRANSFORMERS_VERBOSITY=info` for more details.

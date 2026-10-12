@@ -174,7 +174,8 @@ class Monitor:
                 row["gpu_device_utilization_percent"] = self.nvml.nvmlDeviceGetUtilizationRates(self.gpu).gpu
                 gpu_processes = self.nvml.nvmlDeviceGetComputeRunningProcesses(self.gpu)
                 valid = [p.usedGpuMemory for p in gpu_processes if p.pid in pids]
-                if any(value == self.nvml.NVML_VALUE_NOT_AVAILABLE for value in valid):
+                unavailable = getattr(self.nvml, "NVML_VALUE_NOT_AVAILABLE", 2 ** 64 - 1)
+                if any(value is None or value == unavailable for value in valid):
                     row["gpu_process_vram_bytes"] = None
                 elif pids:
                     row["gpu_process_vram_bytes"] = sum(valid)
@@ -187,9 +188,7 @@ class Monitor:
         row["filesystem_free_bytes"] = shutil.disk_usage(storage).free
         return row
 
-    def _record(self, row, stream):
-        stream.write(json.dumps(row) + "\n")
-        stream.flush()
+    def _record(self, row):
         s = self.summary
         s["sample_count"] += 1
         pairs = {"process_rss_peak_bytes": "process_rss_bytes",
@@ -212,20 +211,19 @@ class Monitor:
         s["process_cpu_seconds"] = max(s["process_cpu_seconds"], row["process_cpu_seconds"] or 0)
 
     def _loop(self):
-        with self.output.open("w", encoding="utf-8") as stream:
-            while True:
+        while True:
+            try:
+                self._record(self._sample())
+            except Exception as exc:
+                reason = f"Resource sampling: {type(exc).__name__}: {exc}"
+                if reason not in self.summary["unavailable"]:
+                    self.summary["unavailable"].append(reason)
+            if self.stop_event.wait(1):
                 try:
-                    self._record(self._sample(), stream)
-                except Exception as exc:
-                    reason = f"Resource sampling: {type(exc).__name__}: {exc}"
-                    if reason not in self.summary["unavailable"]:
-                        self.summary["unavailable"].append(reason)
-                if self.stop_event.wait(1):
-                    try:
-                        self._record(self._sample(), stream)
-                    except Exception:
-                        pass
-                    break
+                    self._record(self._sample())
+                except Exception:
+                    pass
+                break
 
     def stop(self):
         self.stop_event.set()
