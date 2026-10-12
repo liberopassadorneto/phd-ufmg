@@ -1,0 +1,53 @@
+[
+  {
+    "repo": "Luimas/claim-extractor-detective-qwen3b",
+    "revision": "aca7d8336f30593e20ae3e79ecf28c1dba779478",
+    "files": [
+      {
+        "name": "README.md",
+        "bytes": 7661
+      },
+      {
+        "name": "chat_template.jinja",
+        "bytes": 2507
+      },
+      {
+        "name": "config.json",
+        "bytes": 1791
+      },
+      {
+        "name": "generation_config.json",
+        "bytes": 239
+      },
+      {
+        "name": "model-00001-of-00002.safetensors",
+        "bytes": 3968658944
+      },
+      {
+        "name": "model-00002-of-00002.safetensors",
+        "bytes": 2203268048
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "bytes": 35581
+      },
+      {
+        "name": "prompt.txt",
+        "bytes": 3564
+      },
+      {
+        "name": "schema.json",
+        "bytes": 792
+      },
+      {
+        "name": "tokenizer.json",
+        "bytes": 11422356
+      },
+      {
+        "name": "tokenizer_config.json",
+        "bytes": 7211
+      }
+    ],
+    "download_bytes": 6183408694
+  }
+]

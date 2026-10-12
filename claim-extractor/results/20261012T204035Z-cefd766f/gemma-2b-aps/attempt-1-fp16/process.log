@@ -1,0 +1,10 @@
+warning: `VIRTUAL_ENV=.venv` does not match the project environment path `runtimes/classic/.venv` and will be ignored; use `--active` to target the active environment instead
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:01<00:01,  1.90s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:01<00:00,  1.04it/s]
+gemma-2b-aps: chunk_0001/7 (fp16)
+gemma-2b-aps: chunk_0002/7 (fp16)
+gemma-2b-aps: chunk_0003/7 (fp16)
+gemma-2b-aps: chunk_0004/7 (fp16)
+gemma-2b-aps: chunk_0005/7 (fp16)
+gemma-2b-aps: chunk_0006/7 (fp16)
+gemma-2b-aps: chunk_0007/7 (fp16)

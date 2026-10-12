@@ -1,0 +1,31 @@
+{
+  "command": [
+    "uv",
+    "sync",
+    "--frozen",
+    "--project",
+    "/home/libero_neto/phd-ufmg/claim-extractor/runtimes/classic",
+    "--python",
+    "3.10"
+  ],
+  "returncode": 0,
+  "wall_seconds": 0.6581458559958264,
+  "resources": {
+    "sampling_interval_seconds": 1,
+    "sample_count": 2,
+    "process_rss_peak_bytes": 22966272,
+    "system_ram_used_peak_bytes": 1989885952,
+    "system_ram_available_min_bytes": 73921343488,
+    "system_swap_used_peak_bytes": 37265408,
+    "process_cpu_percent_peak": 0,
+    "process_cpu_percent_mean": 0.0,
+    "process_cpu_seconds": 0.01,
+    "system_cpu_percent_peak": 12.5,
+    "gpu_process_vram_peak_bytes": 0,
+    "gpu_device_vram_peak_bytes": 235732992,
+    "gpu_device_utilization_peak_percent": 0,
+    "staging_peak_bytes": 0,
+    "filesystem_free_min_bytes": 31231127552,
+    "unavailable": []
+  }
+}

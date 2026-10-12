@@ -1,0 +1,12 @@
+{
+  "torch": "2.6.0+cu124",
+  "transformers": "4.57.6",
+  "bitsandbytes": null,
+  "cuda": "12.4",
+  "gpu": "NVIDIA GeForce RTX 2080",
+  "compute_capability": [
+    7,
+    5
+  ],
+  "total_vram_bytes": 8354267136
+}

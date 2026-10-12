@@ -1,0 +1,17 @@
+{
+  "alias": "detective-qwen3b",
+  "repo": "Luimas/claim-extractor-detective-qwen3b",
+  "adapter": "detective",
+  "parameters_b": 3.09,
+  "precision": "fp16",
+  "runtime": "classic",
+  "language": "en",
+  "max_new_tokens": 768,
+  "task": "generative_claim_extraction",
+  "base_repo": null,
+  "revision": null,
+  "reference": null,
+  "note": "Official Transformers prompt; JSON validity is not guaranteed without GBNF.",
+  "smaller": null,
+  "model_card": "https://huggingface.co/Luimas/claim-extractor-detective-qwen3b"
+}

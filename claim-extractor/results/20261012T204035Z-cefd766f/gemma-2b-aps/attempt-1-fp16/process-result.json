@@ -1,0 +1,39 @@
+{
+  "command": [
+    "uv",
+    "run",
+    "--frozen",
+    "--no-sync",
+    "--project",
+    "/home/libero_neto/phd-ufmg/claim-extractor/runtimes/classic",
+    "--python",
+    "3.10",
+    "python",
+    "-m",
+    "claim_runner.worker",
+    "--job",
+    "/home/libero_neto/phd-ufmg/claim-extractor/results/20261012T204035Z-cefd766f/gemma-2b-aps/attempt-1-fp16/job.json"
+  ],
+  "returncode": 0,
+  "wall_seconds": 63.65559713402763,
+  "resources": {
+    "sampling_interval_seconds": 1,
+    "sample_count": 64,
+    "process_rss_peak_bytes": 3389227008,
+    "system_ram_used_peak_bytes": 3119935488,
+    "system_ram_available_min_bytes": 72791293952,
+    "system_swap_used_peak_bytes": 37265408,
+    "process_cpu_percent_peak": 150.1,
+    "process_cpu_percent_mean": 91.87777777777782,
+    "process_cpu_seconds": 60.04,
+    "system_cpu_percent_peak": 10.2,
+    "gpu_process_vram_peak_bytes": 0,
+    "gpu_device_vram_peak_bytes": 5517279232,
+    "gpu_device_utilization_peak_percent": 92,
+    "staging_peak_bytes": 5034207485,
+    "filesystem_free_min_bytes": 26176233472,
+    "unavailable": [
+      "NVML sample: AttributeError: module 'pynvml' has no attribute 'NVML_VALUE_NOT_AVAILABLE'"
+    ]
+  }
+}

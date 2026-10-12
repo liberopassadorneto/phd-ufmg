@@ -1,0 +1,39 @@
+{
+  "command": [
+    "uv",
+    "run",
+    "--frozen",
+    "--no-sync",
+    "--project",
+    "/home/libero_neto/phd-ufmg/claim-extractor/runtimes/classic",
+    "--python",
+    "3.10",
+    "python",
+    "-m",
+    "claim_runner.worker",
+    "--probe",
+    "/home/libero_neto/phd-ufmg/claim-extractor/results/20261012T204035Z-cefd766f/preflight/classic/cuda/cuda.json"
+  ],
+  "returncode": 0,
+  "wall_seconds": 5.27558171399869,
+  "resources": {
+    "sampling_interval_seconds": 1,
+    "sample_count": 6,
+    "process_rss_peak_bytes": 580038656,
+    "system_ram_used_peak_bytes": 2367385600,
+    "system_ram_available_min_bytes": 73543843840,
+    "system_swap_used_peak_bytes": 37265408,
+    "process_cpu_percent_peak": 199.1,
+    "process_cpu_percent_mean": 79.12,
+    "process_cpu_seconds": 5.67,
+    "system_cpu_percent_peak": 14.0,
+    "gpu_process_vram_peak_bytes": 0,
+    "gpu_device_vram_peak_bytes": 356188160,
+    "gpu_device_utilization_peak_percent": 1,
+    "staging_peak_bytes": 0,
+    "filesystem_free_min_bytes": 31231107072,
+    "unavailable": [
+      "NVML sample: AttributeError: module 'pynvml' has no attribute 'NVML_VALUE_NOT_AVAILABLE'"
+    ]
+  }
+}
