@@ -81,7 +81,7 @@ caption indices and timestamps are removed.
 |---|---|---|---|
 | gemma-2b-aps | FP16 | Seven frozen APS prompts from automatic.en.aps-input.jsonl, with sentence markers and the official chat template | PROPOSITIONS text, .raw |
 | gemma-7b-aps | NF4/FP16 | Same APS prompts | PROPOSITIONS text, .raw |
-| detective-qwen3b | FP16 | English transcript with official prompt.txt, at most 4,000 characters per chunk | JSON with claims and verification metadata |
+| detective-qwen3b | FP16 | English transcript with official prompt.txt, at most 600 characters and three sentences per chunk | JSON with claims and verification metadata |
 | newsscope | Llama 3.1 8B in NF4 + PEFT adapter | English transcript in the author's article extraction prompt | JSON with article information and claims |
 | babelscape-t5 | FP32 | English text directly | Claim text, .raw |
 | claimpt | FP32 | Portuguese text, 512-token windows with 128-token overlap | Token logits, JSON |
@@ -103,6 +103,18 @@ input can use **--input** (or **--input-en**) with a TXT or SRT file, and option
 Other models receive the full
 transcript when it fits, or chunks sized for their prompt and context limits.
 No translation or extra ASR corrections are performed during the run.
+
+Detective uses the card's fields and published `schema.json` enums with
+[lm-format-enforcer](https://github.com/noamgat/lm-format-enforcer) to constrain
+Transformers decoding. The card's GBNF example uses llama.cpp; this runner keeps
+the Transformers backend for cuba's CPU compatibility. The official prompt is
+unchanged. The 600-character/three-sentence chunks, string length bounds and
+repetition penalty of 1.1 are runner adaptations to the observed generation loop.
+The card's limits of 1–15 claims, 3–12 keywords and 3–6 questions are enforced.
+Generation stops when the JSON object closes. Each chunk's native response is
+saved separately without merging, repairing or removing duplicate claims.
+Token exhaustion, duplicate claims, non-verbatim evidence, invalid ids or
+confidence values remain visible as `partial` with `output_issues`.
 
 ~~~bash
 uv run --frozen run_models.py --models gemma-2b-aps,detective-qwen3b \
@@ -167,6 +179,10 @@ Weights are downloaded directly from Hugging Face, loaded in an isolated process
 and removed before the next checkpoint. Larger models first try NF4 on the GPU.
 If necessary, a second attempt keeps FP16 weights in RAM and transfers modules to
 CUDA through Accelerate; this can be slower.
+For NewsScope's offload attempt, the base and adapter are loaded on CPU before
+offload hooks are attached. PEFT is not allowed to automatically redistribute
+the CPU-loaded base first. Small runtime buffers remain materialized, and adapter
+weights retain their inference dtype instead of being automatically upcast.
 
 With insufficient disk space, the runner can stage weights in an existing tmpfs
 at /dev/shm. It checks file size plus loading RAM before downloading. Defaults
@@ -181,8 +197,30 @@ free -h
 The output folder contains native responses and processing.json only. Runtime
 communication and logs are temporary. Failed models record their error in
 processing.json; the sequence continues unless interrupted or cleanup fails.
+Loading failures retain each attempt's phase, exception and traceback inside
+the same `processing.json`, including an initial failure followed by a retry.
 CPU and NVML measurements are sampled every second, so brief peaks may be missed.
+CPU percentages measure the server CPU processes: 100% is approximately one
+logical core. Inference computation runs on CUDA, including RAM weight offload.
+VRAM reports GPU memory, not GPU compute utilization.
 Model-specific parsing, CSV summaries and detailed run archives are not produced.
+
+## Rerun the failed and partial models
+
+Babelscape and SAGESSE now have protobuf in their own locked environments.
+After pulling the fixes on cuba, run the four affected models into a new folder
+to preserve the previous raw results:
+
+~~~bash
+cd ~/phd-ufmg/claim-extractor
+git pull --ff-only
+uv run --frozen run_models.py \
+  --models babelscape-t5,newsscope,sagesse-mistral,detective-qwen3b \
+  --output-dir results/retry-failed-partial
+~~~
+
+These changes require a new CUDA run to establish whether all four models now
+complete. Schema constraints enforce format, not factual correctness.
 
 ## Tests
 

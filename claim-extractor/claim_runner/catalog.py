@@ -37,7 +37,7 @@ MODELS = (
               task="abstractive_proposition_segmentation", smaller="gemma-2b-aps"),
     ModelSpec("detective-qwen3b", "Luimas/claim-extractor-detective-qwen3b",
               "detective", 3.09, max_new_tokens=4096,
-              note="Official Transformers prompt; JSON validity is not guaranteed without GBNF."),
+              note="Official prompt; shorter lossless chunks and card JSON constraints via lm-format-enforcer."),
     ModelSpec("newsscope", "nidhipandya/NewsScope-lora", "newsscope", 8.03,
               precision="nf4", max_new_tokens=4096,
               base_repo="meta-llama/Meta-Llama-3.1-8B-Instruct",

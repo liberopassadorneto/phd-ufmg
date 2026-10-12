@@ -69,6 +69,19 @@ def processing(record: dict, files: list[Path]) -> dict:
     }
     if last.get("truncated_chunks"):
         result["warning"] = "Model output reached the generation limit and is incomplete; preserved without repair."
+    if last.get("generation_policy"):
+        result["generation_policy"] = last["generation_policy"]
+    if last.get("output_issues"):
+        result["output_issues"] = last["output_issues"]
+        result["warning"] = "Model output violates the card guarantees; preserved without repair."
+        if last.get("truncated_chunks"):
+            result["warning"] += " Generation also reached the token limit."
+    errors = [{"precision": attempt["mode"],
+               "phase": worker.get("failure_phase"), "type": worker.get("error_type"),
+               "error": worker["error"], "traceback": worker.get("error_traceback")}
+              for attempt, worker in zip(attempts, workers) if worker.get("error")]
+    if errors:
+        result["attempt_errors"] = errors
     if extension(record["model"]["adapter"]) == ".json":
         try:
             for path in files:

@@ -94,7 +94,7 @@ def context_limit(tokenizer, model, configured, seq2seq=False):
     return min(candidates)
 
 
-def load_model(job):
+def load_model(job, on_stage=lambda stage: None):
     import torch
     from transformers import (AutoConfig, AutoModelForCausalLM, AutoModelForSeq2SeqLM,
                               AutoModelForTokenClassification, AutoTokenizer, BitsAndBytesConfig)
@@ -102,6 +102,7 @@ def load_model(job):
     spec = job["spec"]
     paths = job["repositories"]
     path = paths[-1]["local_path"] if spec["base_repo"] else paths[0]["local_path"]
+    on_stage("loading_tokenizer")
     tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True, trust_remote_code=False)
     if spec["adapter"] == "claimpt":
         factory = AutoModelForTokenClassification
@@ -126,17 +127,29 @@ def load_model(job):
             bnb_4bit_compute_dtype=torch.float16, bnb_4bit_use_double_quant=True)
         kwargs["device_map"] = {"": 0}
     elif mode == "offload":
-        kwargs["device_map"] = {"": "cpu"}
+        # No dispatch hooks yet: PEFT otherwise sees hf_device_map={'': 'cpu'}
+        # and automatically redispatches weights, leaving meta tensors that
+        # cannot be copied by the later cpu_offload call.
+        kwargs["device_map"] = None
     else:
         kwargs["device_map"] = {"": 0}
+    on_stage("loading_base")
     model = factory.from_pretrained(path, **kwargs)
     if spec["base_repo"]:
         from peft import PeftModel
+        on_stage("loading_adapter")
         model = PeftModel.from_pretrained(model, paths[0]["local_path"], is_trainable=False,
-                                           local_files_only=True)
+            local_files_only=True, low_cpu_mem_usage=False, autocast_adapter_dtype=False,
+            torch_device="cpu" if mode == "offload" else "cuda:0")
     if mode == "offload":
         from accelerate import cpu_offload
-        cpu_offload(model, execution_device=torch.device("cuda:0"), offload_buffers=True)
+        on_stage("loading_offload")
+        missing = [name for name, value in (*model.named_parameters(), *model.named_buffers())
+                   if value.is_meta]
+        if missing:
+            raise RuntimeError("Unloaded meta tensors before CPU offload: " + ", ".join(missing[:8]))
+        # Keep small runtime buffers materialized; only weights are offloaded.
+        cpu_offload(model, execution_device=torch.device("cuda:0"), offload_buffers=False)
     model.eval()
     return model, tokenizer
 
@@ -185,7 +198,7 @@ def run(job_path: Path) -> int:
         result["gpu_budget_bytes"] = budget
         set_phase("loading")
         load_started = time.perf_counter()
-        model, tokenizer = load_model(job)
+        model, tokenizer = load_model(job, on_stage=set_phase)
         torch.cuda.synchronize()
         result["load_seconds"] = time.perf_counter() - load_started
         result["model_memory_bytes"] = model.get_memory_footprint()
@@ -222,9 +235,22 @@ def run(job_path: Path) -> int:
             transformed = fc_preprocess(source) if kind == "fc_t5" else source
             if not transformed:
                 raise ValueError("Input became empty after model-specific preprocessing")
-            chunks = split_text(transformed,
-                lambda text: len(tokenizer(render_prompt(spec, tokenizer, text, model_path))["input_ids"]) <= effective_limit,
-                max_characters=4000 if kind == "detective" else None)
+            fits = lambda text: len(tokenizer(render_prompt(
+                spec, tokenizer, text, model_path))["input_ids"]) <= effective_limit
+            if kind == "detective":
+                from .detective import (CHUNK_CHARACTERS, CHUNK_SENTENCES, REPETITION_PENALTY,
+                                        output_schema, prefix_function, split_input, output_issues)
+                from lmformatenforcer.integrations.transformers import build_token_enforcer_tokenizer_data
+                if tokenizer.eos_token_id is None:
+                    raise ValueError("Detective tokenizer has no EOS token")
+                schema = output_schema(model_path)
+                tokenizer_data = build_token_enforcer_tokenizer_data(tokenizer)
+                chunks = split_input(transformed, fits)
+                result["generation_policy"] = {"format": "card JSON schema via lm-format-enforcer",
+                    "chunk_characters": CHUNK_CHARACTERS, "chunk_sentences": CHUNK_SENTENCES,
+                    "repetition_penalty": REPETITION_PENALTY}
+            else:
+                chunks = split_text(transformed, fits)
         result["chunks_expected"] = len(chunks)
         save()
         blocks = []
@@ -257,6 +283,12 @@ def run(job_path: Path) -> int:
                     if kind == "fc_t5":
                         kwargs.update(num_beams=6, no_repeat_ngram_size=2,
                                       min_length=5, early_stopping=True)
+                    if kind == "detective":
+                        kwargs.update(prefix_allowed_tokens_fn=prefix_function(
+                            tokenizer_data, schema, tokenizer.eos_token_id),
+                            eos_token_id=tokenizer.eos_token_id,
+                            pad_token_id=tokenizer.eos_token_id,
+                            repetition_penalty=REPETITION_PENALTY)
                     if tokenizer.eos_token_id is not None and tokenizer.pad_token_id is None:
                         kwargs["pad_token_id"] = tokenizer.eos_token_id
                     generated = model.generate(**inputs, **kwargs)
@@ -273,21 +305,27 @@ def run(job_path: Path) -> int:
                 new_ids = generated[0] if is_seq2seq else generated[0, inputs["input_ids"].shape[1]:]
                 ids = new_ids.tolist()
                 text = tokenizer.decode(ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
-                eos = model.generation_config.eos_token_id or tokenizer.eos_token_id
+                eos = (tokenizer.eos_token_id if kind == "detective" else
+                       model.generation_config.eos_token_id or tokenizer.eos_token_id)
                 eos = eos if isinstance(eos, list) else [eos]
                 result["truncated_chunks"] += int(len(ids) >= maximum and (not ids or ids[-1] not in eos))
+                if kind == "detective":
+                    issues = output_issues(text, chunk["text"])
+                    if issues:
+                        result.setdefault("output_issues", []).append({"chunk": chunk_id, "issues": issues})
             blocks.append(text)
             write_outputs(out, kind, blocks, chunk_count=len(chunks))
             result["chunks_completed"] += 1
             result["torch_inference_peak_allocated_bytes"] = torch.cuda.max_memory_allocated(0)
             result["torch_inference_peak_reserved_bytes"] = torch.cuda.max_memory_reserved(0)
             save()
-        result["status"] = "partial" if result["truncated_chunks"] else "success"
+        result["status"] = "partial" if result["truncated_chunks"] or result.get("output_issues") else "success"
         set_phase("finished")
         save()
         return 0 if result["status"] == "success" else 1
     except Exception as exc:
-        result.update(status="failed", error_type=type(exc).__name__, error=str(exc), failure_phase=phase)
+        result.update(status="failed", error_type=type(exc).__name__, error=str(exc),
+                      failure_phase=phase, error_traceback=traceback.format_exc())
         if load_started is not None and "load_seconds" not in result:
             result["load_seconds"] = time.perf_counter() - load_started
         if inference_started is not None:
@@ -301,8 +339,8 @@ def run(job_path: Path) -> int:
                 result["torch_failure_peak_reserved_bytes"] = torch.cuda.max_memory_reserved(0)
         except Exception:
             oom = False
-        result["retry_with_offload"] = oom or (job["mode"] == "nf4" and phase == "loading"
-            and isinstance(exc, (RuntimeError, ImportError, ValueError)))
+        result["retry_with_offload"] = oom or (job["mode"] == "nf4" and phase.startswith("loading")
+            and isinstance(exc, (RuntimeError, ValueError)))
         traceback.print_exc()
         save()
         return 42 if result["retry_with_offload"] else 1
