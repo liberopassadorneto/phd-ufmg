@@ -1,173 +1,175 @@
-# Claim Extractor — benchmark sequencial no cuba
+# Claim Extractor — sequential benchmark on cuba
 
-O runner executa os 12 checkpoints distintos de **knowledge-base/all_models.md**.
-Ele usa uma GPU por vez, salva entradas, saídas brutas e métricas, encerra o processo
-e remove os pesos temporários antes de iniciar o próximo checkpoint.
+The runner attempts all 12 distinct model checkpoints listed in
+**knowledge-base/all_models.md**. It runs one model at a time on the GPU, saves
+inputs, raw outputs and metrics, stops the worker process, and removes temporary
+weights before starting the next checkpoint. The GitHub pipelines listed in that
+document are references for model usage; they are not additional benchmark entries.
 
-## Execução no servidor
+## Running on the server
 
-Copie este projeto, incluindo **claim_runner/**, **runtimes/** e os três inputs,
-para uma pasta no cuba. O script roda dentro da sessão SSH; ele não configura
-o daemon SSH nem precisa de acesso root.
+Copy this project, including **claim_runner/**, **runtimes/** and the three input
+files, to a directory on cuba. Run the script inside your SSH session.
 
-Na pasta copiada:
+From the copied project directory:
 
 ~~~bash
 uv sync --frozen
 uv run --frozen hf auth login
 uv run --frozen run_models.py --list-models
 
-# Instala o runtime clássico e testa uma operação CUDA; não baixa modelos.
+# Install the classic runtime and check a CUDA operation without downloading models.
 uv run --frozen run_models.py --check --models gemma-2b-aps
 
-# Primeiro baseline, antes dos modelos grandes.
+# Run the first baseline before trying larger models.
 uv run --frozen run_models.py --models gemma-2b-aps
 
-# Testa quantização NF4 em CUDA antes de baixar um modelo grande.
+# Check NF4 quantization on CUDA before downloading a larger model.
 uv run --frozen run_models.py --check --models dongyru-mistral
 uv run --frozen run_models.py --models dongyru-mistral
 
-# Um, vários ou todos os checkpoints.
+# Select one checkpoint, several checkpoints, or all 12 checkpoints.
 uv run --frozen run_models.py --models gemma-2b-aps,detective-qwen3b
 uv run --frozen run_models.py --models all --output-dir results
 ~~~
 
-Aceite previamente as licenças de [Gemma](https://huggingface.co/google/gemma-2b-aps-it)
-e da base [Llama usada pelo NewsScope](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B-Instruct)
-na conta vinculada ao token. O login HTTP do site não comprova acesso aos pesos.
-O token fica na configuração normal do Hugging Face e não é copiado aos resultados.
+Accept the licenses for [Gemma](https://huggingface.co/google/gemma-2b-aps-it)
+and the [Llama base used by NewsScope](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B-Instruct)
+using the account associated with your token. An HTTP response from the website
+does not confirm access to gated weights. The token remains in the normal Hugging
+Face configuration and is not copied to the results.
 
-Cada execução recebe uma pasta exclusiva, com timestamp UTC e identificador.
-O runner continua após erros individuais; código de saída 1 significa sequência
-incompleta e 130 significa interrupção. Falha na limpeza encerra a sequência para
-impedir o acúmulo de checkpoints. Para processos longos, execute dentro de uma
-sessão tmux existente ou outra sessão persistente disponível no servidor.
+Each run gets a unique directory with a UTC timestamp and an identifier. The runner
+continues after individual model failures. Exit code 1 indicates an incomplete
+sequence; 130 indicates interruption. A cleanup failure stops the sequence to
+prevent checkpoints from accumulating. For long runs, use an existing tmux session
+or another persistent session available on the server.
 
-## Configuração de hardware e armazenamento
+## Hardware and storage configuration
 
-Defaults direcionados ao cuba: Python 3.10, torch 2.6.0/CUDA 12.4, CPU com oito
-cores físicos, RTX 2080/Turing e uma operação de inferência por vez. As dependências
-do supervisor e dos runtimes clássico/moderno possuem lockfiles próprios. O
-runtime moderno usa Transformers 5.5.0 e Orbitals 0.6.1; o clássico usa
-Transformers 4.57.6 e PEFT 0.18.0.
+The defaults target cuba: Python 3.10, torch 2.6.0/CUDA 12.4, eight physical CPU
+cores, an RTX 2080/Turing GPU, and one inference operation at a time. The supervisor
+and the classic and modern runtimes have separate dependency lockfiles. The modern
+runtime uses Transformers 5.5.0 and Orbitals 0.6.1; the classic runtime uses
+Transformers 4.57.6 and PEFT 0.18.0.
 
-- Gemma-2B, Detective e Principled-2B: FP16 em CUDA.
-- T5 e ClaimPT: FP32 em CUDA.
-- Gemma-7B, Principled-4B, NewsScope e os modelos Mistral: NF4 com cálculo FP16.
-- Em falha de NF4 ou falta de VRAM, uma segunda tentativa pode manter pesos FP16
-  em RAM e transferir os módulos para execução CUDA usando Accelerate. Essa
-  alternativa evita computar os módulos no Xeon, mas aumenta transferências e
-  pode ser muito mais lenta.
+- Gemma-2B, Detective and Principled-2B: FP16 on CUDA.
+- T5 and ClaimPT: FP32 on CUDA.
+- Gemma-7B, Principled-4B, NewsScope and Mistral models: NF4 with FP16 computation.
+- If NF4 fails or VRAM is insufficient, a second attempt can keep FP16 weights in
+  RAM and transfer modules to CUDA for execution through Accelerate. This avoids
+  computing those modules on the Xeon, but increases transfers and may be much slower.
 
-São usados kernels nativos do PyTorch: SDPA quando o modelo oferece suporte,
-com Flash SDPA desativado, e atenção eager nos outros casos. Não são instalados
-llama.cpp, FlashAttention, Unsloth ou kernels opcionais de Qwen. O caminho PyTorch
-de Qwen3.5 pode ser mais lento que as implementações otimizadas do autor.
-Os checkpoints Principled são carregados pela classe multimodal nativa, com
-entrada exclusivamente textual; os pesos visuais também constam no orçamento.
+The runner uses native PyTorch kernels: SDPA where supported, with Flash SDPA
+disabled, and eager attention otherwise. The PyTorch path for Qwen3.5 may be slower
+than the author's optimized implementations. Principled checkpoints are loaded
+using the native multimodal class with text-only input; vision weights are included
+in the memory budget.
 
-O supervisor testa FP16 e NF4 em processos isolados. Um SIGILL no probe não
-derruba a sequência. As versões são candidatas para este hardware: resolver
-dependências e passar os testes de CPU não comprova inferência no Xeon sem AVX.
+The supervisor checks FP16 and NF4 in isolated processes. A SIGILL during a probe
+does not crash the sequence. These dependency versions are candidates for this
+hardware: dependency resolution and CPU tests do not establish successful inference
+on the Xeon without AVX.
 
-Antes de baixar cada checkpoint, o runner consulta tamanhos e fixa revisões SHA.
-Ele baixa uma única representação dos pesos, excluindo GGUF, dados de treino e
-pesos duplicados. Quantizar durante o carregamento não reduz o tamanho do download.
+Before downloading each checkpoint, the runner queries file sizes and pins its SHA
+revision. It downloads one representation of the weights, excluding GGUF, training
+data and duplicate weights. Quantization during loading does not reduce download size.
 
-Por padrão, a pasta temporária fica em **.model-staging/**. Se faltar espaço,
-o runner tenta o tmpfs existente em **/dev/shm**, considerando conjuntamente
-o tamanho dos arquivos e a RAM necessária para carregar o modelo. Não cria ou
-redimensiona mounts. Reservas: 5 GiB de disco, 8 GiB de RAM e 1 GiB de VRAM.
+The default temporary directory is **.model-staging/**. If disk space is insufficient,
+the runner tries the existing tmpfs at **/dev/shm**, accounting for both staged files
+and the RAM needed to load the model. Reserved resources are 5 GiB of disk space,
+8 GiB of RAM and 1 GiB of VRAM.
 
-Os pesos publicados do SAGESSE ocupam aproximadamente 27 GiB (29 GB decimais),
-antes de buffers e metadados. Com os 27 GB livres informados, esse checkpoint
-precisa de staging em RAM ou de outro filesystem com capacidade suficiente.
+The published SAGESSE weights occupy approximately 27 GiB (29 decimal GB), before
+buffers and metadata. With the reported 27 GB of free disk space, that checkpoint
+requires staging in RAM or another filesystem with sufficient capacity.
 
 ~~~bash
-# Inspecionar espaço real antes de uma sequência completa.
+# Inspect available resources before running the complete sequence.
 df -h / /dev/shm
 free -h
 
-# Usar um volume maior já montado, se disponível.
-uv run --frozen run_models.py --models all --staging-dir /caminho/do/volume/staging
+# Use an existing larger mounted volume, if available.
+uv run --frozen run_models.py --models all --staging-dir /path/to/volume/staging
 
-# Controlar orçamento e configuração.
+# Adjust resource budgets and configuration.
 uv run --frozen run_models.py --models gemma-7b-aps \
   --gpu-reserve-gib 1 --ram-reserve-gib 8 --disk-reserve-gib 5 \
   --cpu-threads 8 --context-tokens 8192
 
-# Optar explicitamente pela execução com pesos em RAM.
+# Explicitly choose execution with weights stored in RAM.
 uv run --frozen run_models.py --models sagesse-mistral --precision offload
 ~~~
 
-Os ambientes uv e seu cache de pacotes permanecem instalados e também consomem
-disco. O runner reavalia o espaço depois da instalação; esses arquivos não são
-pesos de modelos. O cache Xet de downloads é desativado. Apenas diretórios
-temporários com marcador de propriedade válido são removidos. Outputs, inputs,
-ambientes e caches anteriores do usuário são preservados.
+The uv environments and package cache remain installed and consume disk space.
+The runner checks available space again after installation. The Xet download cache
+is disabled. Cleanup removes only temporary directories with a valid ownership
+marker; outputs, inputs, environments and pre-existing user caches are preserved.
 
-SIGINT e SIGTERM param o subprocesso e limpam o staging. SIGKILL, queda de energia
-ou perda do filesystem podem deixar uma pasta temporária; nesses casos, examine
-o caminho registrado no result.json antes de remover manualmente a pasta.
+SIGINT and SIGTERM stop the subprocess and clean up staging. SIGKILL, power loss or
+filesystem loss may leave a temporary directory. In those cases, inspect the path
+recorded in result.json before manually removing that directory.
 
-## Protocolos de entrada e saída
+## Input and output protocols
 
-| Alias | Checkpoint / protocolo |
+| Alias | Checkpoint / protocol |
 |---|---|
-| gemma-2b-aps | [google/gemma-2b-aps-it](https://huggingface.co/google/gemma-2b-aps-it); APS com marcadores e chat template. |
-| gemma-7b-aps | [google/gemma-7b-aps-it](https://huggingface.co/google/gemma-7b-aps-it); mesmo protocolo APS. |
-| detective-qwen3b | [Luimas](https://huggingface.co/Luimas/claim-extractor-detective-qwen3b); prompt.txt oficial, até 4.000 caracteres por chunk. |
-| newsscope | [nidhipandya/NewsScope-lora](https://huggingface.co/nidhipandya/NewsScope-lora); base Llama 3.1 8B + PEFT, prompt textual do [GitHub](https://github.com/nidhip1611/NewsScope), geração com sampling, temperatura 0.3 e seed 42. |
-| babelscape-t5 | [Babelscape T5](https://huggingface.co/Babelscape/t5-base-summarization-claim-extractor); texto direto, saída em string. |
-| claimpt | [lfcc/bert-claimpt-chunk](https://huggingface.co/lfcc/bert-claimpt-chunk); token classification em português, janelas 512 e overlap 128. |
-| principled-4b | [Principled 4B](https://huggingface.co/principled-intelligence/claim-extractor-4B-q-2605); preparação oficial do [Orbitals](https://github.com/Principled-Intelligence/orbitals). |
-| principled-2b | [Principled 2B](https://huggingface.co/principled-intelligence/claim-extractor-2B-q-2605); mesma preparação. |
-| dongyru-mistral | [dongyru/Mistral-7B-Claim-Extractor](https://huggingface.co/dongyru/Mistral-7B-Claim-Extractor); card vazio, prompt próprio do benchmark identificado no catálogo. |
-| fc-claim-det-t5 | [FC-Claim-Det T5](https://huggingface.co/varadhbhatnagar/fc-claim-det-T5-base); remove mentions/hashtags, normaliza/sumariza; seis beams, ngram 2, comprimento mínimo 5 e até 15 novos tokens. |
-| sagesse-mistral | [SAGESSE](https://huggingface.co/SAGESSE-EPFL/Mistral-7b-claims-extraction); template extraído do README fixado, campos de contexto vazios. |
-| mistral-instruct-v02 | [Mistral-7B-Instruct-v0.2](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.2); prompt próprio; não representa um checkpoint FEVERFact fine-tuned. |
+| gemma-2b-aps | [google/gemma-2b-aps-it](https://huggingface.co/google/gemma-2b-aps-it); APS sentence markers and chat template. |
+| gemma-7b-aps | [google/gemma-7b-aps-it](https://huggingface.co/google/gemma-7b-aps-it); the same APS protocol. |
+| detective-qwen3b | [Luimas](https://huggingface.co/Luimas/claim-extractor-detective-qwen3b); official prompt.txt, at most 4,000 characters per chunk. |
+| newsscope | [nidhipandya/NewsScope-lora](https://huggingface.co/nidhipandya/NewsScope-lora); Llama 3.1 8B base plus PEFT, text prompt from [GitHub](https://github.com/nidhip1611/NewsScope), sampling with temperature 0.3 and seed 42. |
+| babelscape-t5 | [Babelscape T5](https://huggingface.co/Babelscape/t5-base-summarization-claim-extractor); direct text input and string output. |
+| claimpt | [lfcc/bert-claimpt-chunk](https://huggingface.co/lfcc/bert-claimpt-chunk); Portuguese token classification, 512-token windows and 128-token overlap. |
+| principled-4b | [Principled 4B](https://huggingface.co/principled-intelligence/claim-extractor-4B-q-2605); official [Orbitals](https://github.com/Principled-Intelligence/orbitals) preparation. |
+| principled-2b | [Principled 2B](https://huggingface.co/principled-intelligence/claim-extractor-2B-q-2605); the same preparation. |
+| dongyru-mistral | [dongyru/Mistral-7B-Claim-Extractor](https://huggingface.co/dongyru/Mistral-7B-Claim-Extractor); empty model card, benchmark-authored prompt identified in the catalog. |
+| fc-claim-det-t5 | [FC-Claim-Det T5](https://huggingface.co/varadhbhatnagar/fc-claim-det-T5-base); removes mentions/hashtags, normalizes/summarizes; six beams, ngram size 2, minimum length 5 and at most 15 new tokens. |
+| sagesse-mistral | [SAGESSE](https://huggingface.co/SAGESSE-EPFL/Mistral-7b-claims-extraction); template extracted from the pinned README, with empty context fields. |
+| mistral-instruct-v02 | [Mistral-7B-Instruct-v0.2](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.2); benchmark-authored prompt; this is not a FEVERFact fine-tuned checkpoint. |
 
-Variantes menores confirmadas: Gemma-2B-APS para a família Gemma-APS e
-Principled-2B para Principled. Nas consultas aos catálogos dos autores, não foram
-encontradas variantes menores do mesmo extrator NewsScope, dongyru ou SAGESSE.
-Selecionar o modelo grande não o substitui silenciosamente pelo menor.
+Confirmed smaller variants are Gemma-2B-APS for the Gemma-APS family and
+Principled-2B for Principled. Searches of the authors' catalogs did not find smaller
+variants of the same NewsScope, dongyru or SAGESSE extractor. Selecting a larger
+checkpoint always attempts that checkpoint.
 
-A tradução **automatic.en.txt** é usada nos geradores. ClaimPT recebe
-**automatic.srt**, removendo apenas índices e timestamps. As diferenças de tarefa
-e idioma ficam nos metadados; os resultados não formam um ranking automático.
+The generators use the frozen translation in **automatic.en.txt**. ClaimPT receives
+**automatic.srt**, with caption indices and timestamps removed. Differences in
+language and task are recorded in the metadata; results do not automatically form
+a performance ranking.
 
-Gemma usa **automatic.en.aps-input.jsonl**, validado contra as 19 sentenças da
-tradução: sete blocos de até três sentenças. Input inglês customizado pode receber
-um APS JSONL próprio; sem esse arquivo, o supervisor segmenta com NLTK e gera
-blocos de três sentenças. Não realiza tradução ou correções adicionais de ASR.
+Gemma uses **automatic.en.aps-input.jsonl**, validated against the translation's
+19 sentences: seven chunks of at most three sentences. Custom English input can
+have its own APS JSONL. Without that file, the supervisor segments the custom text
+with NLTK and creates chunks of three sentences. The runner does not translate or
+perform additional ASR corrections.
 
 ~~~bash
 uv run --frozen run_models.py --models gemma-2b-aps \
-  --input-en /caminho/transcript.en.txt --aps-input /caminho/prompts.aps.jsonl
+  --input-en /path/to/transcript.en.txt --aps-input /path/to/prompts.aps.jsonl
 
 uv run --frozen run_models.py --models detective-qwen3b,newsscope \
-  --input-en /caminho/transcript.en.txt
+  --input-en /path/to/transcript.en.txt
 ~~~
 
-Os demais geradores recebem o texto inteiro quando couber. A divisão considera
-o prompt renderizado, orçamento de output, contexto do checkpoint e limite
-específico do autor. O teto geral default é 8192 tokens. Todo o texto é preservado
-nas divisões; o pré-processamento intencional de FC-T5 é registrado separadamente.
+Other generators receive the entire text when it fits. Splitting accounts for the
+rendered prompt, output budget, checkpoint context and the author's specific input
+limit. The default overall context ceiling is 8192 tokens. Splitting preserves all
+source text; intentional FC-T5 preprocessing is recorded separately.
 
-Limites default de output: APS 512, Detective 768, NewsScope 2000, Babelscape 512,
-Principled 4096, Mistral 2048, FC-T5 15. As escolhas de orçamento, greedy decoding
-fora NewsScope e NF4 são configurações do benchmark, registradas como adaptações
-do protocolo. O prompt de Orbitals desativa thinking e não inventa uma descrição
-de serviço. O runner preserva as extrações brutas antes de qualquer parser.
+Default output limits are APS 512, Detective 768, NewsScope 2000, Babelscape 512,
+Principled 4096, Mistral 2048 and FC-T5 15. These budgets, greedy decoding outside
+NewsScope, and NF4 are benchmark configurations recorded as protocol adaptations.
+The Orbitals prompt disables thinking and does not invent a service description.
+Raw extractions are preserved before parsing.
 
-Um chunk que atinge o limite de geração sem EOS torna o resultado parcial. Ajuste
-**--max-new-tokens** e **--context-tokens** quando necessário; inputs nunca são
-truncados silenciosamente. JSON inválido gera um erro de parsing separado e não
-apaga a geração. Saída JSON vazia válida permanece distinta de erro de parsing.
+A chunk that reaches its generation limit without EOS makes the result partial.
+Adjust **--max-new-tokens** and **--context-tokens** when needed. Inputs are never
+silently truncated. Invalid JSON produces a separate parsing error and does not
+erase the generation. Valid JSON with empty claims remains distinct from a parsing error.
 
-## Artefatos e métricas
+## Artifacts and metrics
 
-Na pasta de cada execução:
+Each run directory contains:
 
 ~~~text
 run.json
@@ -178,7 +180,7 @@ preflight/<runtime>/...
   model-card.json
   input.json
   download-manifest.json
-  upstream-*/README.md, configs, prompts e schemas disponíveis
+  upstream-*/README.md, available configs, prompts and schemas
   download-resources.jsonl
   result.json
   attempt-1-<precision>/
@@ -191,50 +193,49 @@ preflight/<runtime>/...
     worker-result.json
     process-result.json
     process.log
-  attempt-2-offload/...       quando necessário
+  attempt-2-offload/...       when needed
 ~~~
 
-ClaimPT também salva cada janela em um arquivo **.logits.npz**, contendo logits,
-IDs de entrada e offsets. O raw.jsonl referencia esses arquivos e registra labels.
-As janelas com overlap permanecem separadas; nenhum span é apresentado como um
-claim generativo normalizado.
+ClaimPT also saves each window in a **.logits.npz** file containing logits, input IDs
+and offsets. raw.jsonl references those files and records labels. Overlapping
+windows remain separate; spans are not presented as normalized generative claims.
 
-As saídas textuais incluem IDs dos tokens gerados, decoding com tokens especiais
-e decoding sem esses tokens. Nenhuma deduplicação, verificação de veracidade ou
-reparação de JSON modifica o raw.jsonl. Os job.json registram caminhos temporários
-que deixam de existir após a limpeza; os hashes, revisões e inputs permanecem.
+Text outputs include generated token IDs and decoding both with and without special
+tokens. Deduplication, fact verification and JSON repair never modify raw.jsonl.
+The job.json files record temporary paths that no longer exist after cleanup;
+hashes, revisions and inputs remain available.
 
-Tempo de preflight, download, carregamento, inferência, limpeza e total ficam
-separados. Tempos CUDA são sincronizados antes e depois de cada geração.
-As métricas de recursos são amostradas a cada segundo:
+Preflight, download, loading, inference, cleanup and total times are reported
+separately. CUDA execution is synchronized before and after each generation.
+Resources are sampled once per second:
 
-- RAM/RSS e CPU do subprocesso e seus filhos; CPU pode exceder 100% com vários cores.
-- RAM disponível/usada, swap e CPU do sistema.
-- VRAM do processo, VRAM e utilização do dispositivo via NVML.
-- Picos de memória alocada/reservada no PyTorch, incluindo carregamento.
-- Tamanho do staging e espaço livre do filesystem; RAM do tmpfs integra o uso do sistema.
+- Subprocess and child-process RAM/RSS and CPU; CPU can exceed 100% across multiple cores.
+- System available/used RAM, swap and CPU.
+- Process VRAM, device VRAM and device utilization through NVML.
+- PyTorch peak allocated/reserved memory, including loading.
+- Staging size and filesystem free space; tmpfs RAM contributes to system memory usage.
 
-Picos amostrados podem perder eventos inferiores a um segundo. VRAM do dispositivo
-inclui outros processos; RSS não inclui todos os arquivos armazenados em tmpfs.
-Dados não disponíveis ficam nulos ou acompanhados de motivo. worker-result.json
-complementa a amostragem com máximo RSS e tempo CPU do próprio worker via Linux.
-Valores em bytes são exatos na unidade; GiB usa 1024³ bytes.
+Sampling may miss peaks shorter than one second. Device VRAM includes other
+processes; RSS does not account for all files stored in tmpfs. Unavailable metrics
+are null or accompanied by a reason. worker-result.json complements sampling with
+Linux maximum RSS and CPU time for the worker itself. Storage and memory values
+are reported in bytes; one GiB is 1024³ bytes.
 
-Se ocorrer retry, o resumo agrega tempos das tentativas; cada configuração e saída
-permanece separada. Compare a tentativa selecionada ao estudar precisão versus
-offload; total de sequência inclui preparação e tentativas malsucedidas.
+When a retry occurs, the summary aggregates attempt times while preserving each
+attempt's configuration and outputs. Compare the selected attempt when studying
+precision versus offload; total sequence time includes preparation and failed attempts.
 
-## Validação
+## Validation
 
 ~~~bash
 uv run --frozen python -m unittest discover -s tests -v
 ~~~
 
-Os testes usam CPU, inputs locais e mocks para falhas: integridade dos sete blocos,
-divisão sem perda, seleção dos 12 checkpoints, limpeza restrita, orçamento de
-tmpfs, download interrompido e nova tentativa após OOM.
+Tests use CPU, local inputs and mocked failures to check the seven frozen chunks,
+lossless splitting, selection of all 12 checkpoints, restricted cleanup, tmpfs
+budgeting, interrupted downloads and a fresh attempt after OOM.
 
-Antes de um benchmark no cuba, execute os checks e as duas execuções individuais
-indicadas no início. A resolução dos lockfiles e os testes do supervisor não
-substituem a validação de carregamento, qualidade e performance dos modelos na
-RTX 2080 e no Xeon.
+Before benchmarking on cuba, run the checks and the two individual model executions
+shown at the beginning. Resolving lockfiles and testing the supervisor do not
+replace validation of model loading, output quality and performance on the RTX 2080
+and Xeon.
