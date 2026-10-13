@@ -70,10 +70,10 @@ def make_aps(english: str, data_dir: Path) -> dict:
             raise RuntimeError("Could not download NLTK punkt_tab for custom APS input")
         sentences = nltk.sent_tokenize(english, language="english")
     return {"path": None, "sha256": None, "sentence_count": len(sentences),
-            "records": [{"chunk_id": f"chunk_{i // 3 + 1:04d}", "sentences": sentences[i:i + 3],
+            "records": [{"chunk_id": "chunk_0001", "sentences": sentences,
                          "messages": [{"role": "user", "content": "\n".join(
-                             f"<s> {s} </s>" for s in sentences[i:i + 3])}]}
-                        for i in range(0, len(sentences), 3)]}
+                             f"<s> {sentence} </s>" for sentence in sentences)}]}]}
+
 
 
 def split_text(text: str, fits, max_characters: int | None = None) -> list[dict]:

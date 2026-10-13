@@ -9,6 +9,8 @@ dependencies = [
   "bitsandbytes==0.46.1",
   "numpy==1.26.4",
   "orbitals==0.6.1",
+  "psutil==7.1.0",
+  "nvidia-ml-py==13.580.82",
 ]
 
 [tool.uv]

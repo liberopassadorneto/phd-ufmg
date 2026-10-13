@@ -10,6 +10,8 @@ dependencies = [
   "numpy==1.26.4",
   "sentencepiece==0.2.1",
   "protobuf==5.29.5",
+  "psutil==7.1.0",
+  "nvidia-ml-py==13.580.82",
 ]
 
 [tool.uv]

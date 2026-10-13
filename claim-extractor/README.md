@@ -1,229 +1,237 @@
 # Claim Extractor
 
-Run one model at a time on cuba using your video transcript. Save the model's
-native output and one file with its processing measurements.
+Run the models sequentially on cuba. Each model has its own Python executor,
+uv project and lockfile. Results contain native model responses and processing
+measurements only.
 
-## Run
+## One executor per model
 
-Inside the copied or cloned claim-extractor directory on cuba:
+Each `runtimes/<alias>/` directory contains:
 
-~~~bash
+```text
+run.py           Input/output paths, sources, prompt, model loading and generation
+pyproject.toml   Dependencies for this model
+uv.lock          Locked dependencies for this model
+.venv/           Created by uv; excluded from Git
+```
+
+`DEFAULT_INPUT`, `DEFAULT_OUTPUT`, `INPUT_CONFIGURATION`, `HARDWARE` and
+`GENERATION` are visible in each `run.py`. The registry reads these files; the
+central worker does not choose model prompts or decoding parameters.
+Model libraries are imported inside the executor functions so listing models
+and reading configurations do not load Torch or model weights.
+The original `gemma-2b-aps-inference.py` remains a historical experiment;
+the current model entrypoints are the `run.py` files listed below.
+
+Run these commands from the `claim-extractor` directory:
+
+```bash
+uv run --frozen --project runtimes/gemma-2b-aps \
+  runtimes/gemma-2b-aps/run.py --input automatic.en.txt \
+  --output-dir results/author-protocol
+
+uv run --frozen --project runtimes/claimpt \
+  runtimes/claimpt/run.py --input automatic.srt \
+  --output-dir results/author-protocol
+```
+
+uv installs the selected project's dependencies automatically. Individual
+executors use the Python version selected by the outer uv invocation. To select
+Python 3.10, pass `--python 3.10` to `uv run` before the script path.
+Shared uv cache files are reused across projects; keep the cache and runtimes on
+the same filesystem for Linux hardlinks to avoid copying large CUDA packages.
+
+## Sequential execution
+
+The supervisor retains the existing model selection interface:
+
+```bash
 uv sync --frozen
 uv run --frozen hf auth login
+uv run --frozen run_models.py --list-models
+uv run --frozen run_models.py --models gemma-2b-aps,detective-qwen3b \
+  --output-dir results/author-protocol
+uv run --frozen run_models.py --models all \
+  --output-dir results/author-protocol-all
+```
 
-uv run --frozen run_models.py --check --models gemma-2b-aps,detective-qwen3b
-uv run --frozen run_models.py --models gemma-2b-aps,detective-qwen3b
-~~~
+It starts the corresponding `run.py` in each model's environment, downloads
+one checkpoint at a time, records resource use and removes temporary weights
+before proceeding. Dependencies remain cached. `--check` installs and probes the
+selected runtimes without downloading model weights or generating responses.
+Accept the Gemma and Meta Llama access conditions on Hugging Face before
+downloading gated checkpoints; NewsScope requires its Llama base.
 
-To select other checkpoints, use comma-separated aliases or **--models all**.
-All means the 12 distinct checkpoints in **knowledge-base/all_models.md**.
-If the result directory already contains those models, use another directory:
+## Published protocols and generation settings
 
-~~~bash
-uv run --frozen run_models.py --models gemma-2b-aps,detective-qwen3b   --output-dir results/new-run
-~~~
+These defaults follow the referenced author example or checkpoint configuration.
+An example's token budget is not a mandatory architectural limit.
 
-Accept the Gemma license on Hugging Face before downloading its weights.
-NewsScope also requires access to its Llama base.
+| Model executor | Default input and protocol | Generation | Output |
+|---|---|---|---|
+| [Gemma 2B](runtimes/gemma-2b-aps/run.py) | English; NLTK sentence markers and official chat template | 4,096 new tokens; deterministic | `.raw` |
+| [Gemma 7B](runtimes/gemma-7b-aps/run.py) | Same published APS format | 4,096 new tokens; deterministic | `.raw` |
+| [Detective Qwen3B](runtimes/detective-qwen3b/run.py) | English; published `prompt.txt` and Transformers chat template; up to 4,000 characters per input | 768 new tokens; deterministic | `.json` |
+| [NewsScope](runtimes/newsscope/run.py) | English; standalone article template from author README | 2,000 new tokens; temperature 0.3; other settings inherited | `.json` |
+| [Babelscape T5](runtimes/babelscape-t5/run.py) | English text directly; tokenizer from card | Checkpoint: five beams, minimum length 2, maximum length 250 | `.raw` |
+| [ClaimPT](runtimes/claimpt/run.py) | Portuguese; 512-token windows, stride 128 | Token classification, no generation | Logits, input IDs and offsets in `.json` |
+| [Principled 4B](runtimes/principled-4b/run.py) | Orbitals 0.6.1 prompt; string input becomes assistant message | SDK: 20,000 new tokens; sampling, temperature 0.7, top-p 0.8, top-k 20 | `.json` |
+| [Principled 2B](runtimes/principled-2b/run.py) | Same Orbitals protocol | Same SDK settings | `.json` |
+| [Dongyru Mistral](runtimes/dongyru-mistral/run.py) | Requires user-provided extraction prompt | Checkpoint/library configuration unless explicitly overridden | `.raw` |
+| [FC-Claim-Det T5](runtimes/fc-claim-det-t5/run.py) | English; author P-MRR-HRR preprocessing | Six beams, no-repeat bigrams, minimum length 5, maximum length 15, early stopping | `.raw` |
+| [SAGESSE](runtimes/sagesse-mistral/run.py) | Published Reddit template; explicitly empty submission/parent by default | Checkpoint/library configuration; no invented output budget | `.json` |
+| [Mistral Instruct v0.2](runtimes/mistral-instruct-v02/run.py) | Requires user-provided extraction prompt | Checkpoint/library configuration unless explicitly overridden | `.raw` |
+
+Source links are declared in each executor. Babelscape's generation limits come
+from its checkpoint `generation_config.json`. FC-T5's maximum is `max_length=15`,
+not `max_new_tokens=15`. Its original preprocessing retains the first mention or
+hashtag of each consecutive run; it does not remove all mentions/hashtags.
+
+Principled keeps the SDK defaults `skip_evidences=True` and no AI service
+description. Its prompt disables thinking as the SDK does. The native Qwen3.5
+conditional-generation class is used with text input to load the published
+checkpoint on this Transformers version. The raw response is captured before
+Orbitals parsing or JSON repair.
+
+SAGESSE publishes an input template but no generation call with an output
+budget. Its executor consequently inherits the checkpoint/library configuration.
+That inherited configuration may be short; an incomplete output remains visible.
+
+### Removed custom behavior
+
+There is no built-in `GENERIC_PROMPT`. Detective no longer uses the custom
+600-character/three-sentence partitioning, repetition penalty 1.1, string-field
+bounds, lm-format-enforcer or JSON-closure stop rule. Its HF example does not
+constrain JSON as the author's separate llama.cpp/GBNF example does.
+
+Author defaults can still produce repeated, invalid or incomplete output.
+Following those defaults does not guarantee extraction quality or valid JSON.
+
+## Inputs and explicit overrides
+
+The default generator input is the existing frozen English translation
+`automatic.en.txt`. ClaimPT uses the original Portuguese `automatic.srt` after
+caption indices and timestamps are removed. No runtime translation or ASR
+correction is performed. English generators require an English TXT or SRT.
+
+For one model, `--input` selects its input regardless of language. For a mixed
+run, use `--input-en` and `--input-pt`; `--input` selects only English inputs.
+The input is always your transcript, not the model card's example text.
+NewsScope, Babelscape, FC-T5 and SAGESSE receive transcripts outside their
+original news/summary/social-media/Reddit use cases; these are explicit input
+adaptations, not reproduced author benchmarks.
+
+Gemma processes the whole passage when it fits and only partitions when context
+requires it. The existing seven-chunk APS file is used only when explicitly
+passed with `--aps-input automatic.en.aps-input.jsonl`. Oversized inputs are
+partitioned without discarding source text, including Detective inputs over
+4,000 characters. Each input partition gets its own native model response.
+
+There is no global 16,384-token context default. The context comes from the
+model/tokenizer; `--context-tokens` is an optional ceiling. If the checkpoint
+provides no usable context limit, the executor requests an explicit value.
+
+Use `--max-new-tokens` or `--max-length` to override generation limits, never both:
+
+```bash
+uv run --frozen --project runtimes/detective-qwen3b \
+  runtimes/detective-qwen3b/run.py --max-new-tokens 4096 \
+  --output-dir results/detective-explicit-4096
+```
+
+The default is still 768. `--max-length` controls total sequence length; for a
+causal model it includes the input. These overrides are recorded, not silently
+applied. No sampling seed is forced; provide `--seed` when desired.
+
+SAGESSE context can be supplied with `--submission-file` and
+`--parent-comment-file`. Missing context remains empty as declared in its script.
+
+### Models without published extraction prompts
+
+Dongyru and Mistral Instruct require your own prompt file. The file is treated as
+literal instructions, followed by the transcript, inside the model's chat
+format. It is not a template language and no extra extraction instructions are
+inserted.
+
+```bash
+uv run --frozen --project runtimes/dongyru-mistral \
+  runtimes/dongyru-mistral/run.py --prompt-file /path/to/your-prompt.md \
+  --output-dir results/user-prompt
+
+uv run --frozen run_models.py --models all \
+  --prompt-file dongyru-mistral=/path/to/dongyru-prompt.md \
+  --prompt-file mistral-instruct-v02=/path/to/mistral-prompt.md \
+  --output-dir results/all-with-user-prompts
+```
+
+Without these files, their status is `not_run`; no weights are downloaded for
+them. Other selected models continue. The process returns a nonzero exit code
+when any selected model is not run, fails or produces an incomplete response.
+
+## Memory adaptations for cuba
+
+Memory adaptations remain authorized and explicitly declared per executor:
+
+- Gemma 2B, Detective and Principled 2B: FP16.
+- Babelscape, FC-T5 and ClaimPT: FP32.
+- Gemma 7B, NewsScope, Principled 4B and the Mistral models: NF4 first.
+- Offload fallback keeps FP16 weights in CPU RAM and computes layers on CUDA.
+
+These are RTX 2080 adaptations, not the authors' original precision settings.
+Use `--precision` for an explicit override and `--no-offload-fallback` to disable
+fallback. CUDA SDPA is selected when supported, with Flash SDP disabled for this
+server. Default worker CPU threads are eight. Root sequential runs use Python
+3.10; Torch 2.6.0/CUDA 12.4 remain pinned. Model-specific tokenizer, PEFT and
+Orbitals dependencies are declared in each uv project.
+
+NewsScope loads its base and adapter on CPU before attaching offload hooks.
+PEFT does not automatically redistribute the base first; adapter autocasting is
+disabled and small runtime buffers stay materialized. Babelscape and SAGESSE
+include protobuf for tokenizer loading.
+
+Staging reserves 5 GiB of disk, 8 GiB of RAM and 1 GiB of VRAM by default.
+If weights do not fit on disk, the supervisor can use an existing tmpfs such as
+`/dev/shm`, accounting for loading memory as well. SAGESSE needs about 27 GiB of
+weight staging. No mount or system configuration is created.
 
 ## Results
 
-The existing cuba results are directly accessible here:
+The output root is declared in each script or overridden with `--output-dir`.
+The model alias is always appended:
 
-- [Gemma raw output](results/gemma-2b-aps/output.raw)
-- [Gemma processing](results/gemma-2b-aps/processing.json)
-- [Detective raw output](results/detective-qwen3b/output.json)
-- [Detective processing](results/detective-qwen3b/processing.json)
-
-Default layout:
-
-~~~text
-results/
+```text
+results/author-protocol/
   gemma-2b-aps/
     output.raw
     processing.json
   detective-qwen3b/
     output.json
     processing.json
-~~~
+```
 
-**output.json** contains the JSON generated by the model, without repair or
-reformatting. **output.raw** contains the native text generated by APS or T5.
-For multiple JSON responses, each object gets its own output-001.json,
-output-002.json, and so on. Plain-text chunks remain in generation order in
-output.raw. No .txt files are used by default.
+Raw decoded responses are saved without JSON repair, claim normalization,
+filtering or deduplication. Multiple JSON responses get `output-001.json`,
+`output-002.json`, etc. Plain-text responses remain ordered in `output.raw`.
+Generic models use `.raw` because a user prompt can request any output format.
+No output defaults to `.txt` and no CSV summary is produced.
 
-**processing.json** reports inference, loading, download and total time; peak
-VRAM and RAM; average/peak CPU usage and CPU time; temporary storage usage and
-output size. Memory and storage are in GiB, times in seconds. CPU 100% means
-one logical core. VRAM reports NVML process memory when available, otherwise
-PyTorch allocated memory, identified in the file.
+`processing.json` contains inference (including native-response decoding),
+loading, download and total time; peak VRAM/RAM; CPU average/peak and CPU time;
+temporary storage and output size. It also identifies protocol sources,
+checkpoint revisions, effective generation settings, input path/hash and explicit
+overrides. Failed attempts retain their phase, exception and traceback in this
+same file. Runtime IPC and logs are temporary.
 
-The uploaded Detective result is from the earlier run with a 768-token limit
-and is incomplete. Its original response is preserved, including the incomplete
-JSON, and processing.json marks it as partial. The new default is 4,096 tokens.
-To run it again with the new default:
+Times are seconds, memory/storage are GiB. CPU 100% approximates one logical CPU
+core; it is not GPU utilization. VRAM is GPU process memory from NVML when
+available, otherwise explicitly identified PyTorch allocated memory. Sampling is
+once per second, so brief peaks may be missed. Tmpfs staging consumes system RAM.
 
-~~~bash
-uv run --frozen run_models.py --models detective-qwen3b --output-dir results/detective-longer
-~~~
+`success` means execution completed, not that the claims are correct. `partial`
+means generation exhausted its budget without a stop token. Invalid JSON alone
+does not turn a complete response into `partial`; JSON validity is reported
+separately. `failed`, `interrupted` and `not_run` remain distinct statuses.
 
-## What each model receives and returns
-
-The cards and repositories guide loading, prompts and output formats. The
-content sent to the model is your transcript, not the card's example text.
-
-Generators use **automatic.en.txt**, the frozen English translation of your
-Portuguese **automatic.srt**. ClaimPT uses the original Portuguese SRT after
-caption indices and timestamps are removed.
-
-| Model alias | Execution | Input | Native output |
-|---|---|---|---|
-| gemma-2b-aps | FP16 | Seven frozen APS prompts from automatic.en.aps-input.jsonl, with sentence markers and the official chat template | PROPOSITIONS text, .raw |
-| gemma-7b-aps | NF4/FP16 | Same APS prompts | PROPOSITIONS text, .raw |
-| detective-qwen3b | FP16 | English transcript with official prompt.txt, at most 600 characters and three sentences per chunk | JSON with claims and verification metadata |
-| newsscope | Llama 3.1 8B in NF4 + PEFT adapter | English transcript in the author's article extraction prompt | JSON with article information and claims |
-| babelscape-t5 | FP32 | English text directly | Claim text, .raw |
-| claimpt | FP32 | Portuguese text, 512-token windows with 128-token overlap | Token logits, JSON |
-| principled-4b | NF4/FP16 | English transcript as an assistant message, prepared by Orbitals | JSON with claims and intents |
-| principled-2b | FP16 | Same Orbitals preparation | JSON with claims and intents |
-| dongyru-mistral | NF4/FP16 | English transcript and benchmark-authored prompt; the model card is empty | Requested claims JSON |
-| fc-claim-det-t5 | FP32 | English text after mention/hashtag removal, with the author's decoding settings | Normalized/summarized text, .raw |
-| sagesse-mistral | NF4/FP16 | English transcript in the official Reddit comment template, with empty additional context | Claims JSON |
-| mistral-instruct-v02 | NF4/FP16 | English transcript and benchmark-authored extraction prompt | Requested claims JSON |
-
-NewsScope was trained on news articles; applying it to video transcripts is a
-domain adaptation. Babelscape T5 was trained on summaries and FC-T5 normalizes
-claims. These are different tasks. Mistral-Instruct-v0.2 is a prompted base
-checkpoint, not a FEVERFact fine-tuned extractor.
-
-Gemma's bundled APS input contains 19 sentences in seven chunks. Custom English
-input can use **--input** (or **--input-en**) with a TXT or SRT file, and optionally
-**--aps-input**. Oversized APS sentences are split to fit the token budget.
-Other models receive the full
-transcript when it fits, or chunks sized for their prompt and context limits.
-No translation or extra ASR corrections are performed during the run.
-
-Detective uses the card's fields and published `schema.json` enums with
-[lm-format-enforcer](https://github.com/noamgat/lm-format-enforcer) to constrain
-Transformers decoding. The card's GBNF example uses llama.cpp; this runner keeps
-the Transformers backend for cuba's CPU compatibility. The official prompt is
-unchanged. The 600-character/three-sentence chunks, string length bounds and
-repetition penalty of 1.1 are runner adaptations to the observed generation loop.
-The card's limits of 1–15 claims, 3–12 keywords and 3–6 questions are enforced.
-Generation stops when the JSON object closes. Each chunk's native response is
-saved separately without merging, repairing or removing duplicate claims.
-Token exhaustion, duplicate claims, non-verbatim evidence, invalid ids or
-confidence values remain visible as `partial` with `output_issues`.
-
-~~~bash
-uv run --frozen run_models.py --models gemma-2b-aps,detective-qwen3b \
-  --input /path/to/video.en.srt --output-dir results/video
-~~~
-
-SRT inputs for the generative models must contain English text. The bundled
-Portuguese video uses its existing frozen English translation. ClaimPT receives
-Portuguese input through **--input-pt**.
-
-## Generation budgets for video transcripts
-
-| Models | Default max_new_tokens |
-|---|---:|
-| Gemma-APS, Detective, NewsScope and Mistral | 4,096 |
-| Principled 2B/4B | 8,192 |
-| Babelscape T5 | 1,024 |
-| FC-Claim-Det T5 | 256 |
-| ClaimPT | Not applicable: token classification |
-
-These are runner budgets adapted for transcripts, not mandatory limits from the
-model cards. Author input formats and prompts are retained. Generation stops
-earlier when the model emits EOS. A larger budget can consume more VRAM and time
-if the model actually generates a longer response.
-
-The default context ceiling is 16,384 tokens, capped by the checkpoint's own
-context limit (Gemma-APS remains capped at 8,192). The input is split to leave
-room for the output budget, preserving all source text. T5 encoder windows remain
-512 tokens; their output budget is separate. Outputs that still reach the
-generation limit are explicitly marked partial.
-
-Override the ceiling with **--context-tokens** and the output budget with
-**--max-new-tokens**. Increasing these values does not change the model's weights.
-
-## Server resources
-
-Defaults target the dual Xeon E5620, RTX 2080 with 8 GB VRAM, Python 3.10 and
-PyTorch 2.6.0/CUDA 12.4. Each model has its own uv project, lockfile and virtual
-environment in `runtimes/<model-alias>/`. The runner automatically runs
-`uv sync --frozen` only for selected models before starting their workers.
-
-All runtimes pin the same PyTorch/CUDA versions. Principled models use
-Transformers 5.5.0 and Orbitals; other models use Transformers 4.57.6.
-Only NewsScope includes PEFT. Gemma, T5 and Mistral runtimes include SentencePiece
-and protobuf for tokenizer conversion. Package versions can be changed for one
-model without affecting another model's lockfile.
-
-To prepare one environment manually:
-
-~~~bash
-uv sync --frozen --project runtimes/babelscape-t5 --python 3.10
-~~~
-
-uv reuses its package cache across these environments. On Linux it normally
-hardlinks cached packages when the cache and environments share a filesystem;
-on different filesystems it may copy them and require more disk space. Keep the
-cache on the same filesystem as `runtimes/` to reuse the large Torch/CUDA files.
-Existing `runtimes/classic/.venv` and `runtimes/modern/.venv` environments are no
-longer used; they can be removed after an ongoing benchmark has finished.
-
-Weights are downloaded directly from Hugging Face, loaded in an isolated process,
-and removed before the next checkpoint. Larger models first try NF4 on the GPU.
-If necessary, a second attempt keeps FP16 weights in RAM and transfers modules to
-CUDA through Accelerate; this can be slower.
-For NewsScope's offload attempt, the base and adapter are loaded on CPU before
-offload hooks are attached. PEFT is not allowed to automatically redistribute
-the CPU-loaded base first. Small runtime buffers remain materialized, and adapter
-weights retain their inference dtype instead of being automatically upcast.
-
-With insufficient disk space, the runner can stage weights in an existing tmpfs
-at /dev/shm. It checks file size plus loading RAM before downloading. Defaults
-reserve 5 GiB of disk, 8 GiB of RAM and 1 GiB of VRAM. SAGESSE's original weights
-occupy about 27 GiB and need RAM staging or a larger filesystem on cuba.
-
-~~~bash
-df -h / /dev/shm
-free -h
-~~~
-
-The output folder contains native responses and processing.json only. Runtime
-communication and logs are temporary. Failed models record their error in
-processing.json; the sequence continues unless interrupted or cleanup fails.
-Loading failures retain each attempt's phase, exception and traceback inside
-the same `processing.json`, including an initial failure followed by a retry.
-CPU and NVML measurements are sampled every second, so brief peaks may be missed.
-CPU percentages measure the server CPU processes: 100% is approximately one
-logical core. Inference computation runs on CUDA, including RAM weight offload.
-VRAM reports GPU memory, not GPU compute utilization.
-Model-specific parsing, CSV summaries and detailed run archives are not produced.
-
-## Rerun the failed and partial models
-
-Babelscape and SAGESSE now have protobuf in their own locked environments.
-After pulling the fixes on cuba, run the four affected models into a new folder
-to preserve the previous raw results:
-
-~~~bash
-cd ~/phd-ufmg/claim-extractor
-git pull --ff-only
-uv run --frozen run_models.py \
-  --models babelscape-t5,newsscope,sagesse-mistral,detective-qwen3b \
-  --output-dir results/retry-failed-partial
-~~~
-
-These changes require a new CUDA run to establish whether all four models now
-complete. Schema constraints enforce format, not factual correctness.
-
-## Tests
-
-~~~bash
-uv run --frozen python -m unittest discover -s tests -v
-~~~
+Existing results, including `results/all-models/`, are preserved. A nonempty
+model result directory is never overwritten; use a new output root to compare
+protocols. This refactor has not rerun model inference on cuba.

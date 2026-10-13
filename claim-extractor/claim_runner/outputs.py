@@ -7,6 +7,8 @@ from .resources import GIB, write_json
 
 
 def extension(adapter):
+    if adapter in (".raw", ".json"):
+        return adapter
     return ".raw" if adapter in ("aps", "t5", "fc_t5") else ".json"
 
 
@@ -69,20 +71,16 @@ def processing(record: dict, files: list[Path]) -> dict:
     }
     if last.get("truncated_chunks"):
         result["warning"] = "Model output reached the generation limit and is incomplete; preserved without repair."
-    if last.get("generation_policy"):
-        result["generation_policy"] = last["generation_policy"]
-    if last.get("output_issues"):
-        result["output_issues"] = last["output_issues"]
-        result["warning"] = "Model output violates the card guarantees; preserved without repair."
-        if last.get("truncated_chunks"):
-            result["warning"] += " Generation also reached the token limit."
+    configuration = last.get("configuration") or record.get("configuration")
+    if configuration:
+        result["configuration"] = configuration
     errors = [{"precision": attempt["mode"],
                "phase": worker.get("failure_phase"), "type": worker.get("error_type"),
                "error": worker["error"], "traceback": worker.get("error_traceback")}
               for attempt, worker in zip(attempts, workers) if worker.get("error")]
     if errors:
         result["attempt_errors"] = errors
-    if extension(record["model"]["adapter"]) == ".json":
+    if extension(record["model"].get("output_format", record["model"].get("adapter"))) == ".json":
         try:
             for path in files:
                 json.loads(path.read_text(encoding="utf-8"))

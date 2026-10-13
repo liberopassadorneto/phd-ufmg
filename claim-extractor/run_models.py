@@ -18,7 +18,7 @@ from pathlib import Path
 
 from claim_runner.catalog import MODELS, select_models
 from claim_runner.downloads import download_repositories, repository_manifest
-from claim_runner.inputs import make_aps, read_aps, read_transcript
+from claim_runner.inputs import read_transcript
 from claim_runner.outputs import export_result
 from claim_runner.resources import (GIB, Monitor, choose_staging, cleanup_staging,
                                     create_staging, directory_size, write_json)
@@ -26,46 +26,90 @@ from claim_runner.resources import (GIB, Monitor, choose_staging, cleanup_stagin
 ROOT = Path(__file__).resolve().parent
 
 
-def parse_args(argv=None):
+def parse_args(argv=None, model_alias=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--models", default="all", help="Comma-separated aliases/HF IDs or all")
+    parser.add_argument("--models", default=model_alias or "all", help="Comma-separated aliases/HF IDs or all")
     parser.add_argument("--list-models", action="store_true")
     parser.add_argument("--check", action="store_true", help="Install/check runtimes and CUDA; do not download models")
-    parser.add_argument("--input-en", "--input", dest="input_en", type=Path,
-                        default=ROOT / "automatic.en.txt", help="English video transcript (.txt or .srt)")
-    parser.add_argument("--input-pt", type=Path, default=ROOT / "automatic.srt")
-    parser.add_argument("--aps-input", type=Path, help="Frozen APS JSONL; defaults to bundled file for bundled English text")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "results")
+    parser.add_argument("--input", type=Path, help="Transcript for one model; English input in mixed runs")
+    parser.add_argument("--input-en", type=Path, help="English video transcript (.txt or .srt)")
+    parser.add_argument("--input-pt", type=Path, help="Portuguese input for ClaimPT")
+    parser.add_argument("--aps-input", type=Path, help="Explicit frozen APS JSONL; not selected automatically")
+    parser.add_argument("--prompt-file", action="append", default=[], metavar="ALIAS=PATH",
+                        help="User prompt; repeat ALIAS=PATH for multiple models, or PATH for one model")
+    parser.add_argument("--submission-file", type=Path, help="Optional SAGESSE submission context")
+    parser.add_argument("--parent-comment-file", type=Path, help="Optional SAGESSE parent comment context")
+    parser.add_argument("--output-dir", type=Path, help="Results root; defaults to each model's DEFAULT_OUTPUT")
     parser.add_argument("--staging-dir", type=Path, default=ROOT / ".model-staging")
     parser.add_argument("--ram-staging-dir", type=Path, default=Path("/dev/shm"))
     parser.add_argument("--runtime-dir", type=Path, default=ROOT / "runtimes")
-    parser.add_argument("--python", default="3.10", help="Python version used by uv worker runtimes")
+    parser.add_argument("--python", default=f"{sys.version_info.major}.{sys.version_info.minor}" if model_alias else "3.10",
+                        help="Worker Python; direct executors use their current interpreter version")
     parser.add_argument("--precision", choices=("auto", "fp16", "fp32", "nf4", "offload"), default="auto")
     parser.add_argument("--no-offload-fallback", action="store_true")
     parser.add_argument("--disk-reserve-gib", type=float, default=5)
     parser.add_argument("--ram-reserve-gib", type=float, default=8)
     parser.add_argument("--gpu-reserve-gib", type=float, default=1)
-    parser.add_argument("--context-tokens", type=int, default=16384,
-                        help="Upper bound for input + output context, capped by the checkpoint (default 16384)")
-    parser.add_argument("--max-new-tokens", type=int, help="Override model-specific output limit")
+    parser.add_argument("--context-tokens", type=int,
+                        help="Explicit context ceiling; default comes from the model/tokenizer")
+    limits = parser.add_mutually_exclusive_group()
+    limits.add_argument("--max-new-tokens", type=int, help="Explicit override of published generation budget")
+    limits.add_argument("--max-length", type=int, help="Explicit total sequence-length override")
     parser.add_argument("--cpu-threads", type=int, default=8)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, help="Optional sampling seed; no forced seed by default")
     parser.add_argument("--model-timeout", type=float, default=0,
                         help="Seconds per worker attempt; 0 disables timeout")
     args = parser.parse_args(argv)
     for name in ("disk_reserve_gib", "ram_reserve_gib", "gpu_reserve_gib", "model_timeout"):
         if getattr(args, name) < 0:
             parser.error(f"--{name.replace('_', '-')} must be nonnegative")
-    if args.context_tokens < 1 or args.cpu_threads < 1 or (
-            args.max_new_tokens is not None and args.max_new_tokens < 1):
+    if args.cpu_threads < 1 or any(value is not None and value < 1 for value in
+            (args.context_tokens, args.max_new_tokens, args.max_length)):
         parser.error("Token limits and CPU threads must be positive")
     try:
         args.selected = select_models(args.models)
     except ValueError as exc:
         parser.error(str(exc))
+    if model_alias and [spec.alias for spec in args.selected] != [model_alias]:
+        parser.error("A model's run.py executes only that model; use run_models.py for a sequence")
+    if model_alias and args.python != f"{sys.version_info.major}.{sys.version_info.minor}":
+        parser.error("Select the interpreter with uv run --python before run.py, rather than replacing its active environment")
+    args.prompts = {}
+    for value in args.prompt_file:
+        if "=" in value:
+            alias, filename = value.split("=", 1)
+        elif len(args.selected) == 1:
+            alias, filename = args.selected[0].alias, value
+        else:
+            parser.error("--prompt-file requires ALIAS=PATH when selecting multiple models")
+        matching = [spec for spec in args.selected if alias in (spec.alias, spec.repo)]
+        if len(matching) != 1 or not matching[0].requires_prompt:
+            parser.error(f"{alias}: --prompt-file is only for selected models without a published extraction prompt")
+        alias = matching[0].alias
+        if alias in args.prompts:
+            parser.error(f"Duplicate --prompt-file for {alias}")
+        path = Path(filename).resolve()
+        try:
+            prompt = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            parser.error(str(exc))
+        if not prompt.strip():
+            parser.error(f"Empty prompt file: {path}")
+        args.prompts[alias] = {"prompt": prompt, "prompt_file": str(path)}
+    args.context_files = {}
+    for option in ("submission_file", "parent_comment_file"):
+        path = getattr(args, option)
+        if path is not None:
+            if not any(spec.alias == "sagesse-mistral" for spec in args.selected):
+                parser.error("Context files apply only to SAGESSE")
+            try:
+                args.context_files[option] = str(path.resolve())
+                args.context_files[option.removesuffix("_file")] = path.read_text(encoding="utf-8")
+            except OSError as exc:
+                parser.error(str(exc))
     for spec in args.selected:
-        maximum = args.max_new_tokens or spec.max_new_tokens
-        if spec.adapter not in ("t5", "fc_t5", "claimpt") and maximum >= args.context_tokens:
+        maximum = args.max_new_tokens or spec.generation.get("max_new_tokens")
+        if spec.causal and args.context_tokens and maximum and maximum >= args.context_tokens and args.max_length is None:
             parser.error(f"{spec.alias}: --context-tokens must exceed its {maximum}-token output budget")
     return args
 
@@ -109,13 +153,15 @@ def command_record(command, output, timeout=0, staging=None, env=None):
 def worker_command(args, spec, *extra):
     return ["uv", "run", "--frozen", "--no-sync", "--project",
             str((args.runtime_dir / spec.runtime).resolve()), "--python", args.python,
-            "python", "-m", "claim_runner.worker", *map(str, extra)]
+            "python", str((args.runtime_dir / spec.runtime / "run.py").resolve()), *map(str, extra)]
 
 
 def ensure_runtime(args, spec, run_dir, cache):
     if spec.runtime not in cache:
         folder = run_dir / "preflight" / spec.runtime
         project = args.runtime_dir / spec.runtime
+        if not (project / "run.py").is_file():
+            raise RuntimeError(f"Missing model executor: {project / 'run.py'}")
         if not (project / "uv.lock").is_file():
             raise RuntimeError(f"Missing runtime lock: {project / 'uv.lock'}")
         additional_budget = 0 if (project / ".venv" / "pyvenv.cfg").is_file() else 4 * GIB
@@ -148,18 +194,14 @@ def ensure_quantization(args, spec, state):
 
 def prepare_inputs(args):
     inputs = {}
-    if any(spec.language == "en" for spec in args.selected):
-        inputs["en"] = read_transcript(args.input_en)
-    if any(spec.language == "pt" for spec in args.selected):
-        inputs["pt"] = read_transcript(args.input_pt)
-    aps = None
-    if any(spec.adapter == "aps" for spec in args.selected):
-        frozen = args.aps_input
-        if frozen is None and args.input_en.resolve() == (ROOT / "automatic.en.txt").resolve():
-            frozen = ROOT / "automatic.en.aps-input.jsonl"
-        aps = read_aps(frozen, inputs["en"]["text"]) if frozen else make_aps(
-            inputs["en"]["text"], ROOT / ".runner-nltk")
-    return inputs, aps
+    for spec in args.selected:
+        if spec.requires_prompt and spec.alias not in args.prompts:
+            continue
+        path = args.input_pt if spec.language == "pt" else args.input_en
+        if path is None and args.input is not None and (len(args.selected) == 1 or spec.language == "en"):
+            path = args.input
+        inputs[spec.alias] = read_transcript(path or Path(spec.default_input))
+    return inputs, str(args.aps_input.resolve()) if args.aps_input else None
 
 
 def run_one(args, spec, run_dir, inputs, aps, runtimes):
@@ -170,21 +212,38 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
     staging = parent = None
     record = {"alias": spec.alias, "model": spec.record(), "status": "failed", "attempts": [],
               "download_seconds": 0.0, "cleanup_seconds": 0.0}
+    record["configuration"] = {
+        "sources": spec.sources, "declared_generation": spec.generation,
+        "input": spec.input_configuration, "hardware": spec.hardware_configuration,
+        "overrides": {key: getattr(args, key) for key in
+                      ("max_new_tokens", "max_length", "context_tokens", "seed")
+                      if getattr(args, key) is not None},
+    }
+    if spec.alias in inputs:
+        record["configuration"].update(input_file=inputs[spec.alias]["path"],
+                                       input_sha256=inputs[spec.alias]["sha256"])
+    if spec.requires_prompt and spec.alias not in args.prompts:
+        record.update(status="not_run", total_seconds=0.0,
+                      error="No published extraction prompt; supply --prompt-file for this model")
+        print(f"{spec.alias}: not_run — {record['error']}", flush=True)
+        return record
     try:
         preflight_started = time.perf_counter()
         state = ensure_runtime(args, spec, run_dir, runtimes)
         mode = spec.precision if args.precision == "auto" else args.precision
-        if spec.adapter in ("t5", "fc_t5", "claimpt") and mode == "nf4":
+        if not spec.causal and mode == "nf4":
             raise ValueError("NF4 override is supported only for the causal language models")
         if mode == "nf4" and not ensure_quantization(args, spec, state):
             record["quantization_preflight_failed"] = True
-            if args.no_offload_fallback:
+            if args.no_offload_fallback or not spec.hardware_configuration.get("offload_fallback", True):
                 raise RuntimeError("NF4 CUDA probe failed and offload fallback is disabled")
             mode = "offload"
         record["preflight_seconds"] = time.perf_counter() - preflight_started
         manifests = [repository_manifest(spec.repo, spec.revision)]
         if spec.base_repo:
             manifests.append(repository_manifest(spec.base_repo))
+        record["configuration"]["repositories"] = [
+            {"repo": manifest["repo"], "revision": manifest["revision"]} for manifest in manifests]
         download_bytes = sum(m["download_bytes"] for m in manifests)
         # Include CPU loading/conversion buffers and room for a fallback attempt.
         memory_bytes = int(spec.parameters_b * 1e9 * 2 * 1.35) + 3 * GIB
@@ -219,10 +278,12 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
             attempt_dir.mkdir()
             write_json(attempt_dir / "job.json", {
                 "spec": spec.record(), "repositories": repositories, "mode": mode,
-                "input": inputs[spec.language], "aps": aps, "output": str(attempt_dir.resolve()),
+                "input": inputs[spec.alias], "aps_input": aps, "output": str(attempt_dir.resolve()),
                 "seed": args.seed, "cpu_threads": args.cpu_threads,
                 "gpu_reserve_bytes": int(args.gpu_reserve_gib * GIB),
-                "context_tokens": args.context_tokens, "max_new_tokens": args.max_new_tokens})
+                "context_tokens": args.context_tokens, "max_new_tokens": args.max_new_tokens,
+                "max_length": args.max_length, **args.prompts.get(spec.alias, {}),
+                **(args.context_files if spec.alias == "sagesse-mistral" else {})})
             attempt = command_record(worker_command(args, spec, "--job", attempt_dir / "job.json"),
                                      attempt_dir, args.model_timeout, staging, environment)
             worker_path = attempt_dir / "worker-result.json"
@@ -236,7 +297,9 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
                 record["selected_attempt"] = str(attempt_dir)
                 break
             retry = worker.get("retry_with_offload") or attempt["returncode"] in (42, -signal.SIGILL)
-            if attempt.get("timed_out") or args.no_offload_fallback or mode in ("offload", "fp32") or not retry:
+            if (attempt.get("timed_out") or args.no_offload_fallback or
+                    not spec.hardware_configuration.get("offload_fallback", True) or
+                    mode in ("offload", "fp32") or not retry):
                 break
             print(f"{spec.alias}: retrying with RAM weight offload; first attempt preserved", flush=True)
             mode = "offload"
@@ -271,8 +334,8 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
     return record
 
 
-def main(argv=None):
-    args = parse_args(argv)
+def main(argv=None, model_alias=None):
+    args = parse_args(argv, model_alias=model_alias)
     if args.list_models:
         for spec in MODELS:
             print(f"{spec.alias:24} {spec.repo} [{spec.precision}; {spec.language}; {spec.task}]")
@@ -287,7 +350,8 @@ def main(argv=None):
     # Must be set before huggingface_hub's first import.
     os.environ["HF_HUB_DISABLE_XET"] = "1"
     inputs, aps = prepare_inputs(args)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    if args.output_dir is not None:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
     args.staging_dir.mkdir(parents=True, exist_ok=True)
     records = []
     # Worker communication and runtime probes live only in this temporary directory.
@@ -307,7 +371,7 @@ def main(argv=None):
             print("\n".join(failures) if failures else "All selected runtime/CUDA checks passed.", flush=True)
             return int(bool(failures))
         for spec in args.selected:
-            destination = args.output_dir.resolve() / spec.alias
+            destination = (args.output_dir or Path(spec.default_output)).resolve() / spec.alias
             if destination.exists() and any(destination.iterdir()):
                 raise RuntimeError(f"Results already exist in {destination}. Use another --output-dir to keep both runs.")
             destination.mkdir(parents=True, exist_ok=True)
