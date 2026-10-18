@@ -6,6 +6,67 @@ project. Do not create a separate PostgreSQL or S3 container for an individual
 project. This gives developers working over SSH on this server the same database
 and object data.
 
+## Development workflow
+
+This repository uses trunk-based development. `master` is the shared trunk and
+the only long-lived development branch. Start each change from an up-to-date
+`master` in a short-lived branch, such as `feature/add-search` or
+`fix/transcript-timeout`. Keep changes small and merge them frequently; aim to
+integrate within a day. Do not create long-lived `develop` or release branches.
+
+Open a pull request against `master` for each change. A teammate must approve
+it before it is merged, and pull requests are merged with **Squash and merge**
+so each change enters `master` as one commit. Delete the short-lived branch
+after merging. Use Git tags to mark releases when needed.
+
+Each developer must use their own GitHub account to access this repository,
+push branches, and open pull requests. The repository administrator must add
+each developer's GitHub account as a collaborator. Never use another person's
+GitHub credentials. Since developers share one Linux login, use a separate
+GitHub CLI config directory for your own account in each SSH session. Replace
+`YOUR_GITHUB_LOGIN` with your GitHub username:
+
+```bash
+export GH_CONFIG_DIR="$HOME/.config/gh-YOUR_GITHUB_LOGIN"
+mkdir -p "$GH_CONFIG_DIR"
+gh auth login --hostname github.com --git-protocol https
+gh auth setup-git --hostname github.com
+gh auth status --active --hostname github.com
+```
+
+Keep `GH_CONFIG_DIR` set in the terminal when running `git push` or `gh pr`
+commands so both use your account. Commit author name and email are separate
+from GitHub authentication, so setting them does not grant repository access
+or change which account performs a push. Set your own author information on
+each commit without changing the shared checkout's Git configuration:
+
+```bash
+git -c user.name="Your Name" \
+    -c user.email="your-verified-github-email" \
+    commit -m "Describe your change"
+```
+
+The developers on this server share one Linux login, so files in that account's
+configuration are accessible to all sessions using it. Separate
+`GH_CONFIG_DIR` paths keep active CLI profiles from overwriting each other, but
+do not provide security isolation between people using the same Linux account.
+Do not save or share an administrator's GitHub token there. Separate Linux
+accounts are required if credentials must be private from other server users.
+
+There is no required CI or test check in this repository. The required peer
+review is the merge gate, so authors and reviewers should inspect the complete
+diff and run any relevant checks manually. GitHub does not enforce the branch
+name, branch lifetime, or that work is based on the latest `master`; those are
+team conventions. Keep unfinished features out of the user-visible path, using
+a feature flag when that is appropriate.
+
+Database changes must remain safe while all projects share the same database.
+Use an expand-and-contract migration when changing existing schema: add the new
+schema shape in a backward-compatible migration, update application code and
+data, then remove the old shape in a later migration after all consumers have
+moved. Coordinate migration application so only one developer applies pending
+migrations at a time. See [Add a project](#add-a-project) for Dbmate setup.
+
 The stack runs PostgreSQL 18 (`postgres:18-alpine`), Dbmate for SQL migrations,
 and S3-compatible storage (`ghcr.io/shyim/local-s3:latest`). PostgreSQL uses the
 `phd_ufmg` database. New projects should keep tables in a project-specific
