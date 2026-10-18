@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Initialize local SPG and S3 with the repository's reproducible sample."""
+"""Initialize shared PostgreSQL and S3 with the repository's reproducible sample."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def wait_for_database(conninfo: str) -> None:
     for attempt in range(60):
         try:
             with psycopg.connect(conninfo, connect_timeout=2):
-                print("SPG is ready")
+                print("PostgreSQL is ready")
                 return
         except psycopg.OperationalError:
             if attempt == 59:
@@ -66,14 +66,6 @@ def wait_for_s3(client: Any) -> None:
             time.sleep(2)
 
 
-def apply_migrations(conninfo: str) -> None:
-    migrations = sorted((ROOT / "migrations").glob("*.sql"))
-    with psycopg.connect(conninfo, connect_timeout=5) as conn:
-        for migration in migrations:
-            conn.execute(migration.read_text(encoding="utf-8"))
-            print(f"Applied {migration.name}")
-
-
 def ensure_sample_row(conninfo: str) -> None:
     columns = (
         "video_id, youtube_url, title, channel_id, channel_name, published_at, "
@@ -81,50 +73,47 @@ def ensure_sample_row(conninfo: str) -> None:
     )
     values = tuple(SOURCE.values()) + (BUCKET, OBJECT_KEY)
     with psycopg.connect(conninfo, connect_timeout=5) as conn:
-        existing = conn.execute(
-            "SELECT id FROM youtube_sources WHERE video_id = %s",
-            (VIDEO_ID,),
-        ).fetchone()
-        if existing:
-            conn.execute(
-                """UPDATE youtube_sources SET
-                       youtube_url = %s, title = %s, channel_id = %s,
-                       channel_name = %s, published_at = %s,
-                       duration_seconds = %s, collected_at = %s,
-                       s3_bucket = %s, human_srt_key = NULL,
-                       automatic_srt_key = %s
-                   WHERE video_id = %s""",
-                (
-                    SOURCE["youtube_url"], SOURCE["title"], SOURCE["channel_id"],
-                    SOURCE["channel_name"], SOURCE["published_at"],
-                    SOURCE["duration_seconds"], SOURCE["collected_at"], BUCKET,
-                    OBJECT_KEY, VIDEO_ID,
-                ),
-            )
-            print(f"Updated sample row for {VIDEO_ID}")
-        else:
-            placeholders = ", ".join(["%s"] * len(values))
-            conn.execute(
-                f"INSERT INTO youtube_sources ({columns}) VALUES ({placeholders})",
-                values,
-            )
-            print(f"Inserted sample row for {VIDEO_ID}")
+        placeholders = ", ".join(["%s"] * len(values))
+        conn.execute(
+            f"""INSERT INTO yt_transcript__youtube_sources ({columns})
+                VALUES ({placeholders})
+                ON CONFLICT (video_id) DO UPDATE SET
+                    youtube_url = EXCLUDED.youtube_url,
+                    title = EXCLUDED.title,
+                    channel_id = EXCLUDED.channel_id,
+                    channel_name = EXCLUDED.channel_name,
+                    published_at = EXCLUDED.published_at,
+                    duration_seconds = EXCLUDED.duration_seconds,
+                    collected_at = EXCLUDED.collected_at,
+                    s3_bucket = EXCLUDED.s3_bucket,
+                    human_srt_key = NULL,
+                    automatic_srt_key = EXCLUDED.automatic_srt_key""",
+            values,
+        )
+        print(f"Ensured sample row for {VIDEO_ID}")
 
 
 def main() -> None:
     conninfo = os.getenv(
-        "DATABASE_URL", "host=postgres port=5432 dbname=postgres user=postgres"
+        "DATABASE_URL",
+        "postgresql://phd_ufmg:phd_ufmg@postgres:5432/phd_ufmg?sslmode=disable",
     )
     client = s3_client()
     wait_for_database(conninfo)
     wait_for_s3(client)
 
-    apply_migrations(conninfo)
     if BUCKET not in {
         bucket["Name"] for bucket in client.list_buckets().get("Buckets", [])
     }:
-        client.create_bucket(Bucket=BUCKET)
-        print(f"Created S3 bucket {BUCKET}")
+        try:
+            client.create_bucket(Bucket=BUCKET)
+            print(f"Created S3 bucket {BUCKET}")
+        except Exception:
+            buckets = {
+                bucket["Name"] for bucket in client.list_buckets().get("Buckets", [])
+            }
+            if BUCKET not in buckets:
+                raise
 
     seed_file = ROOT / "seed_data" / VIDEO_ID / "automatic.srt"
     client.upload_file(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check connectivity to the local PostgreSQL and S3 services."""
+"""Check connectivity to the shared PostgreSQL and S3 services."""
 
 from __future__ import annotations
 
@@ -11,10 +11,12 @@ def test_postgres() -> bool:
     try:
         import psycopg
 
-        conninfo = os.getenv(
-            "DATABASE_URL",
-            "host=localhost port=5432 dbname=postgres user=postgres",
-        )
+        conninfo = os.getenv("DATABASE_URL")
+        if not conninfo:
+            raise RuntimeError(
+                "DATABASE_URL is not set; run this check through "
+                "the repository's scripts/with-shared-env helper."
+            )
         with psycopg.connect(conninfo, connect_timeout=5) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")

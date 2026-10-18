@@ -8,7 +8,6 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN uv sync --locked --no-dev
 
-COPY migrations ./migrations
 COPY seed_data ./seed_data
 COPY scripts/bootstrap_compose.py ./scripts/bootstrap_compose.py
 

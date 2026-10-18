@@ -1,3 +1,4 @@
+-- migrate:up
 CREATE TABLE IF NOT EXISTS youtube_sources (
     id BIGSERIAL PRIMARY KEY,
     video_id TEXT NOT NULL,
@@ -15,3 +16,6 @@ CREATE TABLE IF NOT EXISTS youtube_sources (
 
 CREATE UNIQUE INDEX IF NOT EXISTS youtube_sources_video_id_idx
     ON youtube_sources (video_id);
+
+-- migrate:down
+DROP TABLE IF EXISTS youtube_sources;

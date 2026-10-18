@@ -165,19 +165,22 @@ def collect(args: argparse.Namespace) -> int:
     try:
         import psycopg
 
-        conninfo = os.getenv(
-            "DATABASE_URL", "host=localhost port=5432 dbname=postgres user=postgres"
-        )
+        conninfo = os.getenv("DATABASE_URL")
+        if not conninfo:
+            raise RuntimeError(
+                "DATABASE_URL is not set; run the collector through "
+                "the repository's scripts/run-yt-transcript helper."
+            )
         with psycopg.connect(conninfo, connect_timeout=5) as conn:
             existing = conn.execute(
-                "SELECT id FROM youtube_sources WHERE video_id = %s",
+                "SELECT id FROM yt_transcript__youtube_sources WHERE video_id = %s",
                 (record["video_id"],),
             ).fetchone()
         if existing and not args.force:
             print(f"Duplicate video_id {record['video_id']}; use --force to refresh it.", file=sys.stderr)
             return 0
     except Exception as error:  # noqa: BLE001 - report database failures to the CLI
-        print(f"PostgreSQL lookup failed; apply the migration first: {error}", file=sys.stderr)
+        print(f"PostgreSQL lookup failed; check shared configuration and migrations: {error}", file=sys.stderr)
         return 1
 
     try:
@@ -211,13 +214,13 @@ def collect(args: argparse.Namespace) -> int:
 
         with psycopg.connect(conninfo, connect_timeout=5) as conn:
             existing = conn.execute(
-                "SELECT id FROM youtube_sources WHERE video_id = %s",
+                "SELECT id FROM yt_transcript__youtube_sources WHERE video_id = %s",
                 (record["video_id"],),
             ).fetchone()
             if existing:
                 source_id = existing[0]
                 conn.execute(
-                    """UPDATE youtube_sources SET
+                    """UPDATE yt_transcript__youtube_sources SET
                            youtube_url = %s, title = %s, channel_id = %s,
                            channel_name = %s, published_at = %s,
                            duration_seconds = %s, collected_at = %s,
@@ -233,7 +236,7 @@ def collect(args: argparse.Namespace) -> int:
                 )
             else:
                 inserted = conn.execute(
-                    """INSERT INTO youtube_sources (
+                    """INSERT INTO yt_transcript__youtube_sources (
                            video_id, youtube_url, title, channel_id, channel_name,
                            published_at, duration_seconds, collected_at,
                            s3_bucket, human_srt_key, automatic_srt_key
@@ -255,13 +258,13 @@ def collect(args: argparse.Namespace) -> int:
     print(f"Collected caption tracks for {record['video_id']} in {directory}")
     for track, key in srt_keys.items():
         print(f"Stored {track} SRT in s3://{bucket}/{key}")
-    print("Stored video metadata and S3 object keys in PostgreSQL")
+    print("Stored video metadata and S3 object keys in the shared PostgreSQL database")
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Download available pt-BR caption tracks and store their S3 keys in PostgreSQL."
+        description="Download available pt-BR caption tracks and store their S3 keys in the shared database."
     )
     parser.add_argument("--url", required=True, help="YouTube video URL")
     parser.add_argument("--output-dir", default="data/youtube", help="Output root (default: data/youtube)")

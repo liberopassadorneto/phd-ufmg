@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+cd "$repo_root/yt-transcript-collector"
+export S3_BUCKET=youtube-transcripts
+exec "$repo_root/scripts/with-shared-env" uv run --frozen --project . yt-transcript "$@"

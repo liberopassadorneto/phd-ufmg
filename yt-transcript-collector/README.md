@@ -1,43 +1,26 @@
 # YouTube Transcript Collector
 
-This project downloads YouTube caption tracks as SRT, stores the raw files in
-an S3-compatible bucket, and stores video metadata and S3 object keys in SPG.
+This project downloads YouTube caption tracks as SRT, stores the files in the
+shared `youtube-transcripts` bucket, and stores metadata and object keys in the
+`yt_transcript__youtube_sources` table in the shared PostgreSQL database.
 
-## Start the local stack
+The shared PostgreSQL, Dbmate, and S3 services are configured at the repository
+root. Follow the root [README](../README.md) to create the server's shared `.env`
+file and start the services. The first Compose startup applies migrations and
+bootstraps the sample transcript. To apply new migrations later, run
+`docker compose run --rm migrate` from the repository root.
 
-From the repository root, run:
-
-```bash
-docker compose up --build -d
-```
-
-Compose starts SPG and local-s3, then runs a one-shot bootstrap service. The
-bootstrap waits for both services, applies the SQL migrations, creates the
-`youtube-transcripts` bucket, uploads the checked-in sample SRT, and inserts or
-refreshes its matching `youtube_sources` row. It is safe to run again and does
-not remove other rows or objects in existing volumes.
-
-To see bootstrap progress:
+Run the collector from an SSH session on the shared server:
 
 ```bash
-docker compose logs bootstrap
+./scripts/run-yt-transcript --url 'https://www.youtube.com/watch?v=VIDEO_ID'
 ```
 
-The shared sample is video `xIUda-rBS-Q`. On a clean set of Docker volumes,
-each developer gets the same sample row and the same SRT object:
-
-- S3 object: `s3://youtube-transcripts/xIUda-rBS-Q/automatic.srt`
-- PostgreSQL-compatible endpoint: `localhost:5432`
-- S3 endpoint: `http://localhost:9000`
-
-To inspect its database row:
+The checked-in sample is video `xIUda-rBS-Q`; bootstrap stores its row and SRT
+object in the shared database and bucket. To inspect the row:
 
 ```sql
 SELECT id, video_id, youtube_url, title, s3_bucket, automatic_srt_key
-FROM youtube_sources
+FROM yt_transcript__youtube_sources
 WHERE video_id = 'xIUda-rBS-Q';
 ```
-
-The named Docker volumes persist each developer's local data. The bootstrap
-ensures the shared sample exists in each volume; it does not synchronize later
-changes between developers or erase additional local data.

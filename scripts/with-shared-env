@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+env_file="$repo_root/.env"
+
+if [[ ! -r "$env_file" ]]; then
+  printf 'Shared configuration not found: %s\n' "$env_file" >&2
+  printf 'Create it from .env.example and set the shared credentials.\n' >&2
+  exit 2
+fi
+
+if [[ $# -eq 0 ]]; then
+  printf 'Usage: %s command [args...]\n' "$0" >&2
+  exit 2
+fi
+
+set -a
+# This file is maintained by the server administrators and contains simple KEY=value entries.
+source "$env_file"
+set +a
+
+: "${S3_ACCESS_KEY:?Set S3_ACCESS_KEY in the root .env file}"
+: "${S3_SECRET_KEY:?Set S3_SECRET_KEY in the root .env file}"
+: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env file}"
+
+export DATABASE_URL="postgresql://${POSTGRES_USER:-phd_ufmg}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT:-15432}/${POSTGRES_DB:-phd_ufmg}?sslmode=disable"
+export S3_ENDPOINT="http://127.0.0.1:${S3_PORT:-19000}"
+export AWS_DEFAULT_REGION="us-east-1"
+
+exec "$@"
