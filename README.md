@@ -50,8 +50,27 @@ The developers on this server share one Linux login, so files in that account's
 configuration are accessible to all sessions using it. Separate
 `GH_CONFIG_DIR` paths keep active CLI profiles from overwriting each other, but
 do not provide security isolation between people using the same Linux account.
-Do not save or share an administrator's GitHub token there. Separate Linux
-accounts are required if credentials must be private from other server users.
+Before other developers use the shared login, remove the administrator's GitHub
+CLI profile from its default configuration:
+
+```bash
+gh auth logout --hostname github.com --user liberopassadorneto
+```
+
+Also clear any separate Git credential cached for `github.com` by the system's
+Git credential helper. For an HTTPS remote, ask the configured helper to
+forget the GitHub credential:
+
+```bash
+printf 'protocol=https\nhost=github.com\n\n' | git credential reject
+```
+
+`gh auth logout` removes the GitHub CLI profile; it does not necessarily clear
+credentials stored by another helper. Do not save or share an administrator's
+GitHub token on this server. Separate Linux accounts are required if
+credentials must be private from other server users. The administrator account
+can bypass the protected-branch PR requirement, so using its credentials can
+also bypass the normal review gate.
 
 There is no required CI or test check in this repository. The required peer
 review is the merge gate, so authors and reviewers should inspect the complete
