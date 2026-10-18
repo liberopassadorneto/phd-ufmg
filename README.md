@@ -1,76 +1,109 @@
-# Shared PostgreSQL and S3 for `phd-ufmg`
+# phd-ufmg
 
-Every project in this repository, including the YouTube Transcript Collector,
-must use the shared PostgreSQL and S3 services owned by the root Compose
-project. Do not create a separate PostgreSQL or S3 container for an individual
-project. This gives developers working over SSH on this server the same database
-and object data.
+Research software projects and shared development infrastructure for work at
+UFMG. Each project has its own code and project-specific instructions; the
+repository root also provides shared services for projects that need common
+persistent data.
 
-## Development workflow
+## Contents
 
-This repository uses trunk-based development. `master` is the shared trunk and
-the only long-lived development branch. Start each change from an up-to-date
-`master` in a short-lived branch, such as `feature/add-search` or
-`fix/transcript-timeout`. Keep changes small and merge them frequently; aim to
-integrate within a day. Do not create long-lived `develop` or release branches.
+- [Projects](#projects)
+- [Contributing and development workflow](#contributing-and-development-workflow)
+  - [First-time GitHub setup from SSH](#first-time-github-setup-from-ssh)
+  - [Commit, push, and open a pull request](#commit-push-and-open-a-pull-request)
+- [Shared development environment](#shared-development-environment)
+  - [Server setup](#server-setup)
+  - [Connecting to shared data](#connecting-to-shared-data)
+  - [Add a project](#add-a-project)
+  - [Data persistence and lifecycle](#data-persistence-and-lifecycle)
+
+## Projects
+
+| Project | Description | Guide |
+|---|---|---|
+| Claim Extractor | Runs and compares claim-extraction models on transcript data. | [Project README](claim-extractor/README.md) |
+| YouTube Transcript Collector | Downloads YouTube caption tracks and stores transcripts and metadata. | [Project README](yt-transcript-collector/README.md) |
+
+The root `compose.yaml` defines the shared PostgreSQL and S3-compatible
+services. Projects that need persistent data shared across developers should
+use these services; their setup and conventions are documented below.
+
+## Contributing and development workflow
+
+This repository follows [trunk-based development](https://www.atlassian.com/continuous-delivery/continuous-integration/trunk-based-development):
+integrate small changes into the shared trunk frequently, using short-lived
+branches. Here, `master` is the trunk and the only long-lived development
+branch. Start each change from an up-to-date `master`, using a branch such as
+`feature/add-search` or `fix/transcript-timeout`. Aim to merge within a day; do
+not create long-lived `develop` or release branches.
 
 Open a pull request against `master` for each change. A teammate must approve
 it before it is merged, and pull requests are merged with **Squash and merge**
 so each change enters `master` as one commit. Delete the short-lived branch
 after merging. Use Git tags to mark releases when needed.
 
-Each developer must use their own GitHub account to access this repository,
-push branches, and open pull requests. The repository administrator must add
-each developer's GitHub account as a collaborator. Never use another person's
-GitHub credentials. Since developers share one Linux login, use a separate
-GitHub CLI config directory for your own account in each SSH session. Replace
-`YOUR_GITHUB_LOGIN` with your GitHub username:
+Each developer must use their own GitHub account. Ask the repository
+administrator to add your account as a collaborator, then accept the GitHub
+invitation. Never use another person's GitHub credentials.
+
+### First-time GitHub setup from SSH
+
+Since developers share one Linux login, use a separate GitHub CLI config
+directory for your account in each SSH session. Replace `YOUR_GITHUB_LOGIN`
+with your GitHub username:
 
 ```bash
 export GH_CONFIG_DIR="$HOME/.config/gh-YOUR_GITHUB_LOGIN"
 mkdir -p "$GH_CONFIG_DIR"
-gh auth login --hostname github.com --git-protocol https
+gh auth login --hostname github.com --web --git-protocol https
 gh auth setup-git --hostname github.com
 gh auth status --active --hostname github.com
 ```
 
-Keep `GH_CONFIG_DIR` set in the terminal when running `git push` or `gh pr`
-commands so both use your account. Commit author name and email are separate
-from GitHub authentication, so setting them does not grant repository access
-or change which account performs a push. Set your own author information on
-each commit without changing the shared checkout's Git configuration:
+The login command prints a one-time code and a GitHub device-login URL. Open
+that URL in a browser on your own computer, enter the code, and authorize your
+own account; the SSH server does not need a browser. `gh auth setup-git`
+configures Git to use GitHub CLI for HTTPS authentication. Keep `GH_CONFIG_DIR`
+set in every SSH session where you run `git push` or `gh pr`.
+
+GitHub authentication and commit author information are separate. The former
+identifies the account that pushes and opens the PR; the latter appears on the
+commit. Set your own author information on each commit without changing the
+shared checkout's Git configuration.
+
+### Commit, push, and open a pull request
+
+After SSHing into the server, enter the existing repository checkout. These
+commands assume you have repository access and an `origin` remote configured.
+Check that `origin` points to this project, update `master`, create a
+short-lived branch, then make and push your change:
 
 ```bash
+git remote -v
+git switch master
+git pull --ff-only origin master
+git switch -c feature/short-description
+
+# After editing files:
+git status
+git add path/to/changed-file
 git -c user.name="Your Name" \
     -c user.email="your-verified-github-email" \
     commit -m "Describe your change"
+git push -u origin feature/short-description
+gh pr create --base master --fill
 ```
+
+For later commits on the same branch, repeat `git add` and the author-specific
+commit command, then run `git push`. The `gh pr create` command prints the new
+PR URL.
 
 The developers on this server share one Linux login, so files in that account's
 configuration are accessible to all sessions using it. Separate
 `GH_CONFIG_DIR` paths keep active CLI profiles from overwriting each other, but
 do not provide security isolation between people using the same Linux account.
-Before other developers use the shared login, remove the administrator's GitHub
-CLI profile from its default configuration:
-
-```bash
-gh auth logout --hostname github.com --user liberopassadorneto
-```
-
-Also clear any separate Git credential cached for `github.com` by the system's
-Git credential helper. For an HTTPS remote, ask the configured helper to
-forget the GitHub credential:
-
-```bash
-printf 'protocol=https\nhost=github.com\n\n' | git credential reject
-```
-
-`gh auth logout` removes the GitHub CLI profile; it does not necessarily clear
-credentials stored by another helper. Do not save or share an administrator's
-GitHub token on this server. Separate Linux accounts are required if
-credentials must be private from other server users. The administrator account
-can bypass the protected-branch PR requirement, so using its credentials can
-also bypass the normal review gate.
+Use separate Linux accounts if GitHub credentials must be private from other
+server users.
 
 There is no required CI or test check in this repository. The required peer
 review is the merge gate, so authors and reviewers should inspect the complete
@@ -79,21 +112,23 @@ name, branch lifetime, or that work is based on the latest `master`; those are
 team conventions. Keep unfinished features out of the user-visible path, using
 a feature flag when that is appropriate.
 
-Database changes must remain safe while all projects share the same database.
-Use an expand-and-contract migration when changing existing schema: add the new
-schema shape in a backward-compatible migration, update application code and
-data, then remove the old shape in a later migration after all consumers have
-moved. Coordinate migration application so only one developer applies pending
+## Shared development environment
+
+The root Compose stack runs PostgreSQL 18 (`postgres:18-alpine`), Dbmate for
+SQL migrations, and S3-compatible storage (`ghcr.io/shyim/local-s3:latest`).
+PostgreSQL uses the `phd_ufmg` database. Projects using these services should
+keep tables in a project-specific PostgreSQL schema and objects in a
+project-specific S3 bucket. The YouTube Transcript Collector uses the
+`yt_transcript__youtube_sources` table and `youtube-transcripts` bucket.
+
+Database changes must remain safe while projects share the same database. Use
+an expand-and-contract migration when changing an existing schema: add the new
+shape in a backward-compatible migration, update application code and data,
+then remove the old shape in a later migration after all consumers have moved.
+Coordinate migration application so only one developer applies pending
 migrations at a time. See [Add a project](#add-a-project) for Dbmate setup.
 
-The stack runs PostgreSQL 18 (`postgres:18-alpine`), Dbmate for SQL migrations,
-and S3-compatible storage (`ghcr.io/shyim/local-s3:latest`). PostgreSQL uses the
-`phd_ufmg` database. New projects should keep tables in a project-specific
-PostgreSQL schema and objects in a project-specific S3 bucket. The YT Collector
-currently retains its existing prefixed table,
-`yt_transcript__youtube_sources`, and uses the `youtube-transcripts` bucket.
-
-## One-time setup on the server
+### Server setup
 
 An administrator sets up the shared environment file once at the repository
 root:
@@ -120,7 +155,7 @@ Collector bootstrap creates `youtube-transcripts` and stores its checked-in
 sample transcript. This initialization is shared; developers should not set up
 separate database or S3 instances.
 
-## How developers share data
+### Connecting to shared data
 
 Each developer connects to these same services using the server's system Docker
 daemon, the root Compose project, and the shared `.env` file. Use the repository
@@ -151,7 +186,7 @@ daemon. Running Compose on a laptop or through a separate rootless Docker daemon
 would use different containers and data. `local-s3` stores objects on the
 mounted filesystem at `/data`; back up the S3 volume if its contents matter.
 
-## Add a project
+### Add a project
 
 Every project that needs persistent relational or object data must use these
 shared services. Register a project migration directory in the root
@@ -225,7 +260,7 @@ Keep bucket names and credentials out of source control. New projects should
 document their shared-service connection in their own README and must not
 introduce another PostgreSQL or S3 Compose stack.
 
-## Data persistence and lifecycle
+### Data persistence and lifecycle
 
 The root Compose project uses the named volumes `phd-ufmg_postgres-data` and
 `phd-ufmg_s3-data`. They persist on this server when containers stop or are
