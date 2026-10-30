@@ -162,12 +162,12 @@ def worker_process(profile_id, csv_slice, cookie_path, output_dir, extract_subs,
 
     # Mantendo a mensagem do Telegram em português
     telegram_msg = (
-        f"📊 *Relatório do Perfil {profile_id}*\n\n"
-        f"• *Cookie:* `{cookie_name}`\n"
-        f"• *Extraídos:* {extracted_videos}/{len(rows)}\n"
-        f"• *Pendentes:* {len(pending_videos)}\n"
-        f"• *Tempo:* {formatted_time}\n"
-        f"• *Status:* {' Bloqueado pelo YouTube' if block_detected else ' Finalizado com Sucesso'}"
+        f"*Relatório do Perfil {profile_id}*\n\n"
+        f"*Cookie:* `{cookie_name}`\n"
+        f"*Extraídos:* {extracted_videos}/{len(rows)}\n"
+        f"*Pendentes:* {len(pending_videos)}\n"
+        f"*Tempo:* {formatted_time}\n"
+        f"*Status:* {' Bloqueado pelo YouTube' if block_detected else ' Finalizado com Sucesso'}"
     )
     send_telegram_message(telegram_msg, bot_token, chat_id)
 
@@ -221,7 +221,7 @@ def main():
 
     if not pending_records:
         print("All videos from the CSV have already been extracted. Exiting.")
-        send_telegram_message("ℹ️ *Aviso:* Todos os vídeos do CSV informado já foram processados anteriormente.", bot_token, chat_id)
+        send_telegram_message("ℹ*Aviso:* Todos os vídeos do CSV informado já foram processados anteriormente.", bot_token, chat_id)
         sys.exit(0)
 
     num_cookies = len(cookie_files)
@@ -241,12 +241,12 @@ def main():
 
     # Mantendo a mensagem do Telegram em português
     start_msg = (
-        f" *INICIANDO NOVO CICLO DE EXTRAÇÃO*\n\n"
-        f"• *Total no CSV Alvo:* {original_total}\n"
-        f"• *Já Extraídos Anteriormente:* {already_processed}\n"
-        f"• *Faltam Processar:* {len(pending_records)}\n"
-        f"• *Perfis/Cookies Ativos:* {num_cookies}\n"
-        f"• *Média por Perfil:* ~{slice_size} vídeos\n\n"
+        f"*INICIANDO NOVO CICLO DE EXTRAÇÃO*\n\n"
+        f"*Total no CSV Alvo:* {original_total}\n"
+        f"*Já Extraídos Anteriormente:* {already_processed}\n"
+        f"*Faltam Processar:* {len(pending_records)}\n"
+        f"*Perfis/Cookies Ativos:* {num_cookies}\n"
+        f"*Média por Perfil:* ~{slice_size} vídeos\n\n"
         f" _Os downloads foram disparados em paralelo e relatórios parciais serão enviados conforme a conclusão de cada perfil._"
     )
     send_telegram_message(start_msg, bot_token, chat_id)
@@ -327,13 +327,13 @@ def main():
 
     # Mantendo a mensagem do Telegram em português
     final_msg = (
-        f" *EXECUÇÃO PARALELA FINALIZADA*\n\n"
-        f"• *Total Baixados Nesta Sessão:* {total_extracted}\n"
-        f"• *Ainda Pendentes:* {len(all_unextracted)}\n"
-        f"• *Contas Bloqueadas:* {total_blocks}/{num_cookies}\n"
-        f"• *Tempo Total:* {overall_total_time}\n\n"
-        f" Os relatórios individuais e o resumo geral foram salvos na pasta `{final_reports_dir}/`.\n"
-        f" O CSV final com as pendências foi atualizado em `{final_pending_csv}`."
+        f"*EXECUÇÃO PARALELA FINALIZADA*\n\n"
+        f"*Total Baixados Nesta Sessão:* {total_extracted}\n"
+        f"*Ainda Pendentes:* {len(all_unextracted)}\n"
+        f"*Contas Bloqueadas:* {total_blocks}/{num_cookies}\n"
+        f"*Tempo Total:* {overall_total_time}\n\n"
+        f"Os relatórios individuais e o resumo geral foram salvos na pasta `{final_reports_dir}/`.\n"
+        f"O CSV final com as pendências foi atualizado em `{final_pending_csv}`."
     )
     send_telegram_message(final_msg, bot_token, chat_id)
     print("\nExecution and final consolidation completed successfully!")
