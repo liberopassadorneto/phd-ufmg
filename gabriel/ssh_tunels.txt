@@ -1,0 +1,25 @@
+======================================================================
+MÓDULO DE ROTAÇÃO DE IP: PASSO A PASSO PARA ESTABELECER OS TÚNEIS SSH
+======================================================================
+Para que o tráfego seja roteado para as outras máquinas da rede VPN, 
+você precisa abrir portas locais no seu servidor que atuem como proxies 
+SOCKS5. O SSH faz isso nativamente.
+
+Passo 1: Autenticação sem senha (Recomendado)
+No servidor atual, gere uma chave (se não tiver) e copie para a máquina destino:
+
+$ ssh-keygen -t rsa -b 4096
+$ ssh-copy-id usuario@IP_DA_MAQUINA_2_NA_VPN
+
+Passo 2: Abrir os túneis SOCKS5 em background
+Execute os comandos abaixo no terminal do servidor atual para conectar 
+aos outros computadores e mapear portas locais (ex: 1080, 1081):
+
+$ ssh -f -N -D 1080 usuario@IP_DA_MAQUINA_2_NA_VPN
+$ ssh -f -N -D 1081 usuario@IP_DA_MAQUINA_3_NA_VPN
+
+O parâmetro '-f' envia o SSH para background e '-N' diz para não abrir shell.
+
+Passo 3: Configurar a lista no config.conf
+Adicione as portas locais que você abriu na lista 'lista_proxies'.
+======================================================================
