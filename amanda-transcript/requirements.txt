@@ -1,0 +1,16 @@
+openai-whisper
+torch
+jiwer
+sentence-transformers
+mutagen
+pandas
+matplotlib
+scipy
+
+
+#Instalar Whisper, ffmpeg, jiwer e mutagen
+# !nvidia-smi
+# !pip install openai-whisper
+# !apt install ffmpeg -y
+# !pip install youtube-transcript-api jiwer sentence-transformers -q
+# !pip install mutagen
