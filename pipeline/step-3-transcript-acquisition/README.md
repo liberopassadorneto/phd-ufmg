@@ -11,7 +11,8 @@ Compose project. Follow the repository [README](../../README.md) to create the
 shared `.env` file and start the services. The root pipeline bootstrap checks
 the database connection and ensures the transcript bucket exists. To apply new
 migrations later, run
-`docker compose run --rm migrate` from the repository root.
+`docker compose --env-file .env -f pipeline/compose.yaml run --rm migrate`
+from the repository root.
 
 From the repository root on the shared server, run:
 

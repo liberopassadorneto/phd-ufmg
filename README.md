@@ -10,8 +10,9 @@ Shared pipeline components live under `pipeline/`:
 
 - `bootstrap/` contains shared-service initialization and connection helpers.
 - `schema/` contains the final PostgreSQL schema definition.
-- `migrations/` contains Dbmate migrations. The root `compose.yaml` runs them
-  when the Docker stack starts.
+- `migrations/` contains Dbmate migrations. `pipeline/compose.yaml` runs them
+  when the Docker stack starts. Run it from the repository root with
+  `docker compose --env-file .env -f pipeline/compose.yaml up -d`.
 - `step-N-*` directories organize code by pipeline stage. Steps 1, 2, 4, 5,
   and 6 are TODO scaffolds; step 3 contains the transcript acquisition app.
 
