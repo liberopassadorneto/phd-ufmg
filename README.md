@@ -8,10 +8,10 @@ database records the data and execution provenance produced by each stage.
 
 1. [Project Structure](#1-project-structure)
 2. [Pipeline](#2-pipeline)
-   - [Shared PostgreSQL and S3](#shared-postgresql-and-s3)
-     - [Step-by-step use](#step-by-step-use)
-     - [How data is shared](#how-data-is-shared)
    - [Pipeline Steps](#pipeline-steps)
+3. [Shared PostgreSQL and S3](#3-shared-postgresql-and-s3)
+   - [Step-by-step use](#step-by-step-use)
+   - [How data is shared](#how-data-is-shared)
 
 ## 1. Project Structure
 
@@ -31,9 +31,30 @@ transcript can be registered.
 
 ## 2. Pipeline
 
-### Shared PostgreSQL and S3
+### Pipeline Steps
 
-#### Step-by-step use
+1. **Query Definition** — Define the queries used to find relevant YouTube
+   videos.
+2. **YouTube Search and Metadata Collection** — Search YouTube with those
+   queries, record the results, and collect video metadata.
+3. **Transcript Acquisition** — Download available YouTube caption tracks and
+   store transcript files and their records. The
+   `pipeline/step-3-transcript-acquisition` project handles this stage; videos
+   must already be registered by the earlier stages.
+4. **Content Eligibility Screening** — Evaluate transcript language and topic
+   relevance to decide whether the content can proceed.
+5. **Claim Extraction** — Extract claims from eligible transcripts, retaining
+   source positions when available. Only content that passes screening
+   proceeds to this stage.
+6. **Claim Classification** — Assign classifications to extracted claims.
+
+The database schema represents all six steps. Applications control their
+execution order and branching, including the rule that only transcripts that
+pass screening proceed to claim extraction.
+
+## 3. Shared PostgreSQL and S3
+
+### Step-by-step use
 
 Greenwich (`150.164.2.42`) hosts the single shared PostgreSQL database and the
 S3-compatible object store. Follow these steps to use them from either host.
@@ -96,31 +117,10 @@ S3-compatible object store. Follow these steps to use them from either host.
    use `pipeline/bootstrap/with-shared-env` so they connect to the same
    PostgreSQL database and S3 bucket.
 
-#### How data is shared
+### How data is shared
 
 PostgreSQL is the source of truth for structured records, statuses, and
 workflow state. S3 stores transcript files in the shared `youtube-transcripts`
 bucket. Store each file's bucket and object key in PostgreSQL. Cuba and
 Greenwich then read the same database records and S3 objects; do not maintain
 or synchronize separate copies between the hosts.
-
-### Pipeline Steps
-
-1. **Query Definition** — Define the queries used to find relevant YouTube
-   videos.
-2. **YouTube Search and Metadata Collection** — Search YouTube with those
-   queries, record the results, and collect video metadata.
-3. **Transcript Acquisition** — Download available YouTube caption tracks and
-   store transcript files and their records. The
-   `pipeline/step-3-transcript-acquisition` project handles this stage; videos
-   must already be registered by the earlier stages.
-4. **Content Eligibility Screening** — Evaluate transcript language and topic
-   relevance to decide whether the content can proceed.
-5. **Claim Extraction** — Extract claims from eligible transcripts, retaining
-   source positions when available. Only content that passes screening
-   proceeds to this stage.
-6. **Claim Classification** — Assign classifications to extracted claims.
-
-The database schema represents all six steps. Applications control their
-execution order and branching, including the rule that only transcripts that
-pass screening proceed to claim extraction.
