@@ -6,7 +6,7 @@ env_file="$repo_root/.env"
 
 if [[ ! -r "$env_file" ]]; then
   printf 'Shared configuration not found: %s\n' "$env_file" >&2
-  printf 'Create it from .env.example and set the shared credentials.\n' >&2
+  printf 'Create it from pipeline/bootstrap/.env.example and set the shared credentials.\n' >&2
   exit 2
 fi
 

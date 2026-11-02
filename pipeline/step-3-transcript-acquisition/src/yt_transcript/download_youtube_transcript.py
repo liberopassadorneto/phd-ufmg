@@ -25,7 +25,7 @@ except ImportError:
         pass
 
 
-VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,}$")
+VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class CollectorError(RuntimeError):
@@ -128,14 +128,24 @@ def collect(args: argparse.Namespace) -> int:
                 "DATABASE_URL is not set; run the collector through "
                 "the repository's scripts/run-yt-transcript helper."
             )
+        source_types = {
+            "human": "YOUTUBE_MANUAL",
+            "automatic": "YOUTUBE_AUTOMATIC",
+        }
         with psycopg.connect(conninfo, connect_timeout=5) as conn:
             conn.execute("SET search_path TO phd_pipeline, public")
             existing = conn.execute(
-                "SELECT 1 FROM transcript WHERE video_id = %s LIMIT 1",
+                "SELECT source_type, language_code FROM transcript WHERE video_id = %s",
                 (video_id,),
-            ).fetchone()
-        if existing and not args.force:
-            print(f"Duplicate video_id {video_id}; use --force to refresh it.", file=sys.stderr)
+            ).fetchall()
+        existing_tracks = {(source_type, language) for source_type, language in existing}
+        tracks = [
+            (track, language)
+            for track, language in tracks
+            if args.force or (source_types[track], language) not in existing_tracks
+        ]
+        if not tracks:
+            print(f"All available transcript tracks for {video_id} are already collected; use --force to refresh them.")
             return 0
     except Exception as error:  # noqa: BLE001 - report database failures to the CLI
         print(f"PostgreSQL lookup failed; check shared configuration and migrations: {error}", file=sys.stderr)
@@ -174,7 +184,7 @@ def collect(args: argparse.Namespace) -> int:
             conn.execute("SET search_path TO phd_pipeline, public")
             for track, srt_path in srt_paths.items():
                 language = manual_language if track == "human" else automatic_language
-                source_type = "YOUTUBE_MANUAL" if track == "human" else "YOUTUBE_AUTOMATIC"
+                source_type = source_types[track]
                 conn.execute(
                     """INSERT INTO transcript
                        (video_id, source_type, language_code, file_format, acquisition_tool,
@@ -205,7 +215,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--url", required=True, help="YouTube video URL")
     parser.add_argument("--output-dir", default="data/youtube", help="Output root (default: data/youtube)")
-    parser.add_argument("--force", action="store_true", help="Replace records for an already-collected video ID")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-download and replace already-collected transcript tracks",
+    )
     parser.add_argument(
         "--s3-endpoint",
         default=os.getenv("S3_ENDPOINT", "http://localhost:9000"),

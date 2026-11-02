@@ -136,7 +136,7 @@ CREATE INDEX idx_search_run_query
 -- One YouTube video exists only once globally, regardless of how many
 -- queries/search runs return it. The same video_id is reused everywhere.
 CREATE TABLE video (
-    video_id CHAR(11) PRIMARY KEY,
+    video_id TEXT PRIMARY KEY,
     first_discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -147,7 +147,7 @@ CREATE TABLE video (
 CREATE TABLE search_result (
     search_run_id BIGINT NOT NULL
         REFERENCES search_run(search_run_id) ON DELETE CASCADE,
-    video_id CHAR(11) NOT NULL
+    video_id TEXT NOT NULL
         REFERENCES video(video_id) ON DELETE RESTRICT,
     result_position INTEGER NOT NULL CHECK (result_position > 0),
     retrieved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -163,7 +163,7 @@ CREATE INDEX idx_search_result_video
 -- tags and statistics may change if the same video is observed again.
 CREATE TABLE video_metadata_snapshot (
     metadata_snapshot_id BIGSERIAL PRIMARY KEY,
-    video_id CHAR(11) NOT NULL
+    video_id TEXT NOT NULL
         REFERENCES video(video_id) ON DELETE RESTRICT,
     observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
@@ -216,7 +216,7 @@ CREATE TABLE video_metadata_tag (
 --   - SHA/checksum calculated by the pipeline
 CREATE TABLE transcript (
     transcript_id BIGSERIAL PRIMARY KEY,
-    video_id CHAR(11) NOT NULL
+    video_id TEXT NOT NULL
         REFERENCES video(video_id) ON DELETE RESTRICT,
 
     source_type transcript_source_enum NOT NULL,
