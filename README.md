@@ -10,12 +10,9 @@ database records the data and execution provenance produced by each stage.
 2. [Pipeline](#2-pipeline)
    - [Pipeline Steps](#pipeline-steps)
 3. [Shared PostgreSQL and S3](#3-shared-postgresql-and-s3)
-   - [Architecture overview](#architecture-overview)
-   - [PostgreSQL: structured data](#postgresql-structured-data)
-   - [S3-compatible storage: files](#s3-compatible-storage-files)
-   - [End-to-end data flow](#end-to-end-data-flow)
-   - [Step-by-step use](#step-by-step-use)
-   - [How data is shared](#how-data-is-shared)
+   - [TL;DR](#tldr)
+   - [Architecture](#architecture)
+   - [How to use it](#how-to-use-it)
 
 ## 1. Project Structure
 
@@ -58,149 +55,59 @@ pass screening proceed to claim extraction.
 
 ## 3. Shared PostgreSQL and S3
 
-### Architecture overview
+### TL;DR
 
-Greenwich (`150.164.2.42`) hosts the one shared PostgreSQL database and the
-project's S3-compatible object store (`local-s3`). Cuba (`150.164.2.13`) reaches
-both through one SSH tunnel. The services bind to Greenwich's loopback ports;
-the tunnel makes them available on Cuba's loopback without exposing their ports
-directly to the network.
+- **Greenwich (`150.164.2.42`) hosts the shared services:** one PostgreSQL database and one S3-compatible `local-s3` store.
+- **PostgreSQL is the source of truth for structured data** such as videos, transcript metadata, pipeline status, and claims.
+- **S3 is the source of truth for file contents.** The shared transcript bucket is `youtube-transcripts`.
+- **Cuba (`150.164.2.13`) and Greenwich use those same services.** Cuba reaches them through an SSH tunnel; there is no database or file synchronization between hosts.
 
-```text
-                          SHARED SOURCE OF TRUTH
-
-  cuba (150.164.2.13)                         greenwich (150.164.2.42)
-  ┌────────────────────┐                     ┌──────────────────────────┐
-  │ pipeline / workers │                     │ 127.0.0.1:15432           │
-  │                    │                     │       │                  │
-  │ localhost:15432 ───┼──── SSH tunnel ────►│       └─► PostgreSQL :5432│
-  │ localhost:19000 ───┼──── SSH tunnel ────►│                          │
-  └────────────────────┘                     │ 127.0.0.1:19000           │
-                                              │       └─► local-s3 :9000 │
-                                              └──────────────────────────┘
-```
-
-### PostgreSQL: structured data
-
-PostgreSQL is the single source of truth for structured records, pipeline
-status, relationships, and provenance. Both hosts read and write the same
-database; there is no separate Cuba database to synchronize.
+### Architecture
 
 ```text
-cuba worker ── localhost:15432 ── SSH ──┐
-                                         ├── one PostgreSQL database
-Greenwich worker ── localhost:15432 ────┘
+CUBA: workers                         GREENWICH: shared services
+127.0.0.1:15432 ── SSH tunnel ──────► PostgreSQL (host :15432 → container :5432)
+127.0.0.1:19000 ── SSH tunnel ──────► local-s3   (host :19000 → container :9000)
+                                           │
+                                     bucket: youtube-transcripts
 ```
 
-An insert or update committed by either host is immediately visible to queries
-from the other host.
-
-### S3-compatible storage: files
-
-The project currently runs `local-s3`, an S3-compatible service, on Greenwich.
-Its host port is `19000` and its container API port is `9000`. The shared
-transcript bucket is `youtube-transcripts`. This is the project's current
-object store; it is not an AWS S3 bucket or a MinIO deployment.
-
-PostgreSQL stores the reference to each file, while S3 stores the file bytes:
+A PostgreSQL record points to the file stored in S3:
 
 ```text
-PostgreSQL record                         S3 object
-┌─────────────────────────────┐           ┌──────────────────────────────┐
-│ transcript metadata         │           │ bucket: youtube-transcripts  │
-│ bucket: youtube-transcripts ├──────────►│ key: transcripts/<video>/...│
-│ object key: transcripts/... │           │ file bytes                   │
-└─────────────────────────────┘           └──────────────────────────────┘
+PostgreSQL row                         S3 object
+bucket + object_key ─────────────────► youtube-transcripts/<object_key>
 ```
 
-Workers on both hosts use the same bucket and object keys. Use unique or
-deterministic object keys so concurrent workers do not overwrite unrelated
-files.
+### How to use it
 
-### End-to-end data flow
-
-For example, when a Cuba worker acquires a transcript:
-
-```text
-1. Cuba worker downloads transcript
-2. PUT file to S3: youtube-transcripts/transcripts/<video-id>/transcript.txt
-3. INSERT transcript metadata and object key into PostgreSQL
-4. COMMIT
-5. Greenwich reads the PostgreSQL row and GETs the same S3 object
-```
-
-Upload the object before committing its database reference. Once the commit
-succeeds, Greenwich can discover the row and fetch the object immediately.
-There is no database replication, file copy, `rsync`, or synchronization job
-between Cuba and Greenwich.
-
-### Step-by-step use
-
-Greenwich (`150.164.2.42`) hosts the single shared PostgreSQL database and the
-S3-compatible object store. Follow these steps to use them from either host.
-
-1. **Start the shared services on Greenwich.** From the repository root on
-   Greenwich, run this once or whenever the services are stopped:
+1. **Start PostgreSQL and `local-s3` on Greenwich** from the repository root:
 
    ```bash
    docker compose --env-file .env -f pipeline/compose.yaml up -d
    ```
 
-2. **Configure the credentials on both hosts.** The root `.env` on Greenwich
-   and Cuba must provide the credentials for the same database and S3 store.
-   Keep `.env` out of Git and restrict access with `chmod 600 .env`.
-
-3. **Use the services locally from Greenwich.** Run database and pipeline
-   commands through `pipeline/bootstrap/with-shared-env`. It sets the database
-   URL to `127.0.0.1:15432` and the S3 endpoint to `127.0.0.1:19000`.
-
-4. **Log in to Cuba from your workstation** through the bastion:
-
-   ```bash
-   ssh -J libero_neto@150.164.2.44 libero_neto@150.164.2.13
-   ```
-
-5. **Open the tunnel from Cuba to Greenwich.** In a Cuba terminal, run:
+2. **On Cuba, open the tunnel** from the repository root and keep it running while workers use the services:
 
    ```bash
    pipeline/bootstrap/open-shared-tunnel
    ```
 
-   The script connects as `marcele_araponga@150.164.2.42` and forwards the
-   shared PostgreSQL and S3 ports to Cuba's localhost. Keep this terminal open
-   while workers use the services. If the SSH session closes or Cuba restarts,
-   open the tunnel again.
+   If the tunnel closes or Cuba restarts, run the command again. The project wrapper uses the forwarded localhost ports `15432` and `19000`.
 
-6. **Check the tunnel from a second Cuba terminal:**
+3. **Check the tunnel from another Cuba terminal:**
 
    ```bash
    nc -vz -w 3 127.0.0.1 15432
    nc -vz -w 3 127.0.0.1 19000
    ```
 
-7. **Verify database access from Cuba:**
+4. **Run pipeline commands through the shared environment wrapper** on either host:
 
    ```bash
-   pipeline/bootstrap/with-shared-env bash -c \
-     'psql "$DATABASE_URL" -c "select current_database(), current_user;"'
+   pipeline/bootstrap/with-shared-env <command>
    ```
 
-8. **Verify S3 access from Cuba** and list the available buckets:
+   The root `.env` on each host must contain credentials for the same shared database and S3 service. Keep it out of Git and set permissions with `chmod 600 .env`.
 
-   ```bash
-   pipeline/bootstrap/with-shared-env \
-     uv run --frozen --project pipeline/step-3-transcript-acquisition \
-     python -c 'import boto3, os; from botocore.config import Config; s=boto3.client("s3", endpoint_url=os.environ["S3_ENDPOINT"], aws_access_key_id=os.environ["S3_ACCESS_KEY"], aws_secret_access_key=os.environ["S3_SECRET_KEY"], region_name=os.environ["AWS_DEFAULT_REGION"], config=Config(s3={"addressing_style":"path"})); print([b["Name"] for b in s.list_buckets()["Buckets"]])'
-   ```
-
-9. **Run workers through the shared environment wrapper.** Both hosts should
-   use `pipeline/bootstrap/with-shared-env` so they connect to the same
-   PostgreSQL database and S3 bucket.
-
-### How data is shared
-
-PostgreSQL is the source of truth for structured records, statuses, and
-workflow state. S3 stores transcript files in the shared `youtube-transcripts`
-bucket. Store each file's bucket and object key in PostgreSQL. Cuba and
-Greenwich then read the same database records and S3 objects; do not maintain
-or synchronize separate copies between the hosts.
+5. **When saving a file, upload it to S3 and store its bucket and object key in PostgreSQL.** After the database transaction commits, workers on the other host can query the record and read the same S3 object immediately.
