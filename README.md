@@ -80,32 +80,56 @@ S3-compatible object store. Follow these steps to use them from either host.
    ssh -J libero_neto@150.164.2.44 libero_neto@150.164.2.13
    ```
 
-5. **Open the tunnel from Cuba to Greenwich.** In a Cuba terminal, run:
+5. **Enable key-based SSH from Cuba to Greenwich.** The tunnel container uses
+   `ssh-agent` and cannot answer an interactive password prompt. If needed,
+   generate a key, authorize it on Greenwich, start the agent, and load the key:
 
    ```bash
-   pipeline/bootstrap/open-shared-tunnel
+   ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_greenwich
+   ssh-copy-id -i ~/.ssh/id_ed25519_greenwich.pub marcele_araponga@150.164.2.42
+   eval "$(ssh-agent -s)"
+   ssh-add ~/.ssh/id_ed25519_greenwich
    ```
 
-   The script connects as `marcele_araponga@150.164.2.42` and forwards the
-   shared PostgreSQL and S3 ports to Cuba's localhost. Keep this terminal open
-   while workers use the services. If the SSH session closes or Cuba restarts,
-   open the tunnel again.
+   If a key is already authorized on Greenwich, load that key into the agent
+   instead of generating another one.
 
-6. **Check the tunnel from a second Cuba terminal:**
+6. **Start the tunnel with Docker Compose** on Cuba from the bootstrap directory:
+
+   ```bash
+   cd pipeline/bootstrap
+   docker compose up -d --build
+   ```
+
+   This bootstrap Compose file starts only the SSH tunnel; `pipeline/compose.yaml`
+   starts the shared PostgreSQL and S3 services on Greenwich. The tunnel connects
+   as `marcele_araponga@150.164.2.42` and forwards those services to Cuba's
+   localhost. To inspect or stop the tunnel, use:
+
+   ```bash
+   docker compose logs -f shared-tunnel
+   docker compose down
+   ```
+
+   The container restarts with Docker while the SSH agent and loaded key are
+   available. After a Cuba reboot, start the agent, load the key, then run
+   `docker compose up -d` again.
+
+7. **Check the tunnel on Cuba:**
 
    ```bash
    nc -vz -w 3 127.0.0.1 15432
    nc -vz -w 3 127.0.0.1 19000
    ```
 
-7. **Verify database access from Cuba:**
+8. **Verify database access from Cuba:**
 
    ```bash
    pipeline/bootstrap/with-shared-env bash -c \
      'psql "$DATABASE_URL" -c "select current_database(), current_user;"'
    ```
 
-8. **Verify S3 access from Cuba** and list the available buckets:
+9. **Verify S3 access from Cuba** and list the available buckets:
 
    ```bash
    pipeline/bootstrap/with-shared-env \
@@ -113,7 +137,7 @@ S3-compatible object store. Follow these steps to use them from either host.
      python -c 'import boto3, os; from botocore.config import Config; s=boto3.client("s3", endpoint_url=os.environ["S3_ENDPOINT"], aws_access_key_id=os.environ["S3_ACCESS_KEY"], aws_secret_access_key=os.environ["S3_SECRET_KEY"], region_name=os.environ["AWS_DEFAULT_REGION"], config=Config(s3={"addressing_style":"path"})); print([b["Name"] for b in s.list_buckets()["Buckets"]])'
    ```
 
-9. **Run workers through the shared environment wrapper.** Both hosts should
+10. **Run workers through the shared environment wrapper.** Both hosts should
    use `pipeline/bootstrap/with-shared-env` so they connect to the same
    PostgreSQL database and S3 bucket.
 
