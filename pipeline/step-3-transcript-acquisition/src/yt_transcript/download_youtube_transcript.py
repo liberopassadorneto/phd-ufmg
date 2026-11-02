@@ -134,9 +134,20 @@ def collect(args: argparse.Namespace) -> int:
         }
         with psycopg.connect(conninfo, connect_timeout=5) as conn:
             conn.execute("SET search_path TO phd_pipeline, public")
+            video = conn.execute(
+                "SELECT id FROM video WHERE youtube_video_id = %s",
+                (video_id,),
+            ).fetchone()
+            if video is None:
+                print(
+                    f"Video {video_id} is not registered; run the earlier search/metadata stage first.",
+                    file=sys.stderr,
+                )
+                return 1
+            video_pk = video[0]
             existing = conn.execute(
                 "SELECT source_type, language_code FROM transcript WHERE video_id = %s",
-                (video_id,),
+                (video_pk,),
             ).fetchall()
         existing_tracks = {(source_type, language) for source_type, language in existing}
         tracks = [
@@ -195,7 +206,7 @@ def collect(args: argparse.Namespace) -> int:
                          acquisition_tool_version = EXCLUDED.acquisition_tool_version,
                          acquired_at = NOW(), s3_bucket = EXCLUDED.s3_bucket,
                          s3_key = EXCLUDED.s3_key, size_bytes = EXCLUDED.size_bytes""",
-                    (video_id, source_type, language, getattr(yt_dlp, "version", None),
+                    (video_pk, source_type, language, getattr(yt_dlp, "version", None),
                      bucket, srt_keys[track], srt_path.stat().st_size),
                 )
     except Exception as error:  # noqa: BLE001 - report integration failures to the CLI
