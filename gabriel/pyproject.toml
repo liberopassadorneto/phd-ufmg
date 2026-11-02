@@ -1,0 +1,20 @@
+[project]
+name = "yt-scraper"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "gdon", email = "rpg.email.next@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "boto3>=1.43.117",
+    "yt-dlp[default]>=2026.10.21",
+]
+
+[project.scripts]
+yt-scraper = "yt_scraper:main"
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
