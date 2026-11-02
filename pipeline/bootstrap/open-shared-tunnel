@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+greenwich_ssh_user="${GREENWICH_SSH_USER:-marcele_araponga}"
+greenwich_ssh_host="${GREENWICH_SSH_HOST:-150.164.2.42}"
+postgres_port="${POSTGRES_PORT:-15432}"
+s3_port="${S3_PORT:-19000}"
+
+exec ssh -N -o ExitOnForwardFailure=yes \
+  -L "127.0.0.1:${postgres_port}:127.0.0.1:${postgres_port}" \
+  -L "127.0.0.1:${s3_port}:127.0.0.1:${s3_port}" \
+  "${greenwich_ssh_user}@${greenwich_ssh_host}"
