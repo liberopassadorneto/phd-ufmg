@@ -4,7 +4,16 @@ The UFMG Research Pipeline collects YouTube videos related to research
 queries and processes their transcripts to identify and classify claims. Its
 database records the data and execution provenance produced by each stage.
 
-## Project organization
+## Contents
+
+1. [Project Structure](#1-project-structure)
+2. [Pipeline](#2-pipeline)
+   - [Shared PostgreSQL and S3](#shared-postgresql-and-s3)
+     - [Step-by-step use](#step-by-step-use)
+     - [How data is shared](#how-data-is-shared)
+   - [Pipeline Steps](#pipeline-steps)
+
+## 1. Project Structure
 
 Shared pipeline components live under `pipeline/`:
 
@@ -20,63 +29,82 @@ The step 3 application downloads YouTube captions, stores the files in S3, and
 updates only `phd_pipeline.transcript`. A video record must exist before a
 transcript can be registered.
 
-## Shared PostgreSQL and S3
+## 2. Pipeline
 
-### Source of truth
+### Shared PostgreSQL and S3
 
-Greenwich (`150.164.2.42`) hosts the shared PostgreSQL database and S3-compatible
-object storage. PostgreSQL is the source of truth for structured records,
-statuses, and workflow state. S3 stores transcript files; PostgreSQL records
-their bucket and object key. Both hosts use these same services, so workers do
-not synchronize separate database or file copies. The transcript bucket is
-`youtube-transcripts`.
+#### Step-by-step use
 
-### Connect from Cuba
+Greenwich (`150.164.2.42`) hosts the single shared PostgreSQL database and the
+S3-compatible object store. Follow these steps to use them from either host.
 
-From a workstation, log in to Cuba through the bastion:
+1. **Start the shared services on Greenwich.** From the repository root on
+   Greenwich, run this once or whenever the services are stopped:
 
-```bash
-ssh -J libero_neto@150.164.2.44 libero_neto@150.164.2.13
-```
+   ```bash
+   docker compose --env-file .env -f pipeline/compose.yaml up -d
+   ```
 
-On Cuba, open the tunnel to Greenwich in one terminal:
+2. **Configure the credentials on both hosts.** The root `.env` on Greenwich
+   and Cuba must provide the credentials for the same database and S3 store.
+   Keep `.env` out of Git and restrict access with `chmod 600 .env`.
 
-```bash
-pipeline/bootstrap/open-shared-tunnel
-```
+3. **Use the services locally from Greenwich.** Run database and pipeline
+   commands through `pipeline/bootstrap/with-shared-env`. It sets the database
+   URL to `127.0.0.1:15432` and the S3 endpoint to `127.0.0.1:19000`.
 
-The script connects as `marcele_araponga@150.164.2.42` and forwards PostgreSQL
-port `15432` and S3 port `19000` to Cuba's localhost. Keep this terminal open
-while workers use the services. If the SSH session closes or Cuba restarts,
-run the command again. The root `.env` on Cuba must contain the shared database
-and S3 credentials; keep it out of Git and set its permissions with
-`chmod 600 .env`.
+4. **Log in to Cuba from your workstation** through the bastion:
 
-### Check the connection
+   ```bash
+   ssh -J libero_neto@150.164.2.44 libero_neto@150.164.2.13
+   ```
 
-In a second Cuba terminal, check the forwarded ports:
+5. **Open the tunnel from Cuba to Greenwich.** In a Cuba terminal, run:
 
-```bash
-nc -vz -w 3 127.0.0.1 15432
-nc -vz -w 3 127.0.0.1 19000
-```
+   ```bash
+   pipeline/bootstrap/open-shared-tunnel
+   ```
 
-Then verify PostgreSQL authentication:
+   The script connects as `marcele_araponga@150.164.2.42` and forwards the
+   shared PostgreSQL and S3 ports to Cuba's localhost. Keep this terminal open
+   while workers use the services. If the SSH session closes or Cuba restarts,
+   open the tunnel again.
 
-```bash
-pipeline/bootstrap/with-shared-env bash -c \
-  'psql "$DATABASE_URL" -c "select current_database(), current_user;"'
-```
+6. **Check the tunnel from a second Cuba terminal:**
 
-Verify S3 authentication and list the buckets:
+   ```bash
+   nc -vz -w 3 127.0.0.1 15432
+   nc -vz -w 3 127.0.0.1 19000
+   ```
 
-```bash
-pipeline/bootstrap/with-shared-env \
-  uv run --frozen --project pipeline/step-3-transcript-acquisition \
-  python -c 'import boto3, os; from botocore.config import Config; s=boto3.client("s3", endpoint_url=os.environ["S3_ENDPOINT"], aws_access_key_id=os.environ["S3_ACCESS_KEY"], aws_secret_access_key=os.environ["S3_SECRET_KEY"], region_name=os.environ["AWS_DEFAULT_REGION"], config=Config(s3={"addressing_style":"path"})); print([b["Name"] for b in s.list_buckets()["Buckets"]])'
-```
+7. **Verify database access from Cuba:**
 
-## Pipeline steps
+   ```bash
+   pipeline/bootstrap/with-shared-env bash -c \
+     'psql "$DATABASE_URL" -c "select current_database(), current_user;"'
+   ```
+
+8. **Verify S3 access from Cuba** and list the available buckets:
+
+   ```bash
+   pipeline/bootstrap/with-shared-env \
+     uv run --frozen --project pipeline/step-3-transcript-acquisition \
+     python -c 'import boto3, os; from botocore.config import Config; s=boto3.client("s3", endpoint_url=os.environ["S3_ENDPOINT"], aws_access_key_id=os.environ["S3_ACCESS_KEY"], aws_secret_access_key=os.environ["S3_SECRET_KEY"], region_name=os.environ["AWS_DEFAULT_REGION"], config=Config(s3={"addressing_style":"path"})); print([b["Name"] for b in s.list_buckets()["Buckets"]])'
+   ```
+
+9. **Run workers through the shared environment wrapper.** Both hosts should
+   use `pipeline/bootstrap/with-shared-env` so they connect to the same
+   PostgreSQL database and S3 bucket.
+
+#### How data is shared
+
+PostgreSQL is the source of truth for structured records, statuses, and
+workflow state. S3 stores transcript files in the shared `youtube-transcripts`
+bucket. Store each file's bucket and object key in PostgreSQL. Cuba and
+Greenwich then read the same database records and S3 objects; do not maintain
+or synchronize separate copies between the hosts.
+
+### Pipeline Steps
 
 1. **Query Definition** — Define the queries used to find relevant YouTube
    videos.
