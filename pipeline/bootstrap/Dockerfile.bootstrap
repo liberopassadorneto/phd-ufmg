@@ -1,0 +1,8 @@
+FROM python:3.14-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir boto3 psycopg[binary]
+COPY bootstrap_shared_services.py ./bootstrap_shared_services.py
+
+CMD ["python", "bootstrap_shared_services.py"]

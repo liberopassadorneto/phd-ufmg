@@ -11,7 +11,6 @@ import argparse
 import os
 import re
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -33,10 +32,6 @@ class CollectorError(RuntimeError):
     """A controlled caption-collection error."""
 
 
-def now_iso() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-
-
 def extract_video_id(url: str) -> str | None:
     """Extract an ID from canonical, short, Shorts, embed, and live YouTube URLs."""
     parsed = urlparse(url)
@@ -54,15 +49,6 @@ def extract_video_id(url: str) -> str | None:
     return candidate if candidate and VIDEO_ID_RE.fullmatch(candidate) else None
 
 
-def published_at(info: dict[str, Any]) -> str | None:
-    if info.get("timestamp"):
-        return datetime.fromtimestamp(info["timestamp"], tz=timezone.utc).date().isoformat()
-    value = info.get("upload_date")
-    if isinstance(value, str) and re.fullmatch(r"\d{8}", value):
-        return f"{value[:4]}-{value[4:6]}-{value[6:]}"
-    return None
-
-
 def choose_caption_track(tracks: dict[str, Any], language: str = "pt-BR") -> str | None:
     """Prefer Brazilian Portuguese, accepting generic Portuguese as a fallback."""
     available = {str(key).lower(): str(key) for key, value in tracks.items() if value}
@@ -72,33 +58,6 @@ def choose_caption_track(tracks: dict[str, Any], language: str = "pt-BR") -> str
     if language.lower() == "pt-br":
         return available.get("pt")
     return None
-
-
-def base_source_record(video_id: str, url: str) -> dict[str, Any]:
-    """Create the source metadata persisted with the caption object pointers."""
-    return {
-        "video_id": video_id,
-        "youtube_url": url,
-        "title": None,
-        "channel_id": None,
-        "channel_name": None,
-        "published_at": None,
-        "duration_seconds": None,
-        "collected_at": now_iso(),
-    }
-
-
-def update_source_record(record: dict[str, Any], info: dict[str, Any]) -> None:
-    record.update(
-        {
-            "video_id": info.get("id") or record["video_id"],
-            "title": info.get("title"),
-            "channel_id": info.get("channel_id"),
-            "channel_name": info.get("channel") or info.get("uploader"),
-            "published_at": published_at(info),
-            "duration_seconds": int(info["duration"]) if info.get("duration") is not None else None,
-        }
-    )
 
 
 def common_ydl_options() -> dict[str, Any]:
@@ -140,15 +99,13 @@ def collect(args: argparse.Namespace) -> int:
         return 2
 
     directory = Path(args.output_dir).expanduser() / video_id
-    record = base_source_record(video_id, args.url)
     try:
         with yt_dlp.YoutubeDL(common_ydl_options()) as ydl:
             info = ydl.extract_info(args.url, download=False)
         if not isinstance(info, dict):
             raise CollectorError("yt-dlp did not return video metadata")
-        update_source_record(record, info)
     except (DownloadError, CollectorError) as error:
-        print(f"Source collection failed: {error}", file=sys.stderr)
+        print(f"Caption-track discovery failed: {error}", file=sys.stderr)
         return 1
 
     manual_language = choose_caption_track(info.get("subtitles") or {})
@@ -172,12 +129,13 @@ def collect(args: argparse.Namespace) -> int:
                 "the repository's scripts/run-yt-transcript helper."
             )
         with psycopg.connect(conninfo, connect_timeout=5) as conn:
+            conn.execute("SET search_path TO phd_pipeline, public")
             existing = conn.execute(
-                "SELECT id FROM yt_transcript__youtube_sources WHERE video_id = %s",
-                (record["video_id"],),
+                "SELECT 1 FROM transcript WHERE video_id = %s LIMIT 1",
+                (video_id,),
             ).fetchone()
         if existing and not args.force:
-            print(f"Duplicate video_id {record['video_id']}; use --force to refresh it.", file=sys.stderr)
+            print(f"Duplicate video_id {video_id}; use --force to refresh it.", file=sys.stderr)
             return 0
     except Exception as error:  # noqa: BLE001 - report database failures to the CLI
         print(f"PostgreSQL lookup failed; check shared configuration and migrations: {error}", file=sys.stderr)
@@ -186,7 +144,7 @@ def collect(args: argparse.Namespace) -> int:
     try:
         directory.mkdir(parents=True, exist_ok=True)
         srt_paths = {
-            track: download_srt(args.url, directory, record["video_id"], language, track)
+            track: download_srt(args.url, directory, video_id, language, track)
             for track, language in tracks
         }
     except (DownloadError, CollectorError, UnicodeDecodeError) as error:
@@ -199,7 +157,7 @@ def collect(args: argparse.Namespace) -> int:
 
         bucket = args.s3_bucket
         srt_keys = {
-            track: f"{record['video_id']}/{track}.srt" for track in srt_paths
+            track: f"{video_id}/{track}.srt" for track in srt_paths
         }
         s3 = boto3.client(
             "s3",
@@ -213,52 +171,31 @@ def collect(args: argparse.Namespace) -> int:
             s3.upload_file(str(srt_path), bucket, srt_keys[track])
 
         with psycopg.connect(conninfo, connect_timeout=5) as conn:
-            existing = conn.execute(
-                "SELECT id FROM yt_transcript__youtube_sources WHERE video_id = %s",
-                (record["video_id"],),
-            ).fetchone()
-            if existing:
-                source_id = existing[0]
+            conn.execute("SET search_path TO phd_pipeline, public")
+            for track, srt_path in srt_paths.items():
+                language = manual_language if track == "human" else automatic_language
+                source_type = "YOUTUBE_MANUAL" if track == "human" else "YOUTUBE_AUTOMATIC"
                 conn.execute(
-                    """UPDATE yt_transcript__youtube_sources SET
-                           youtube_url = %s, title = %s, channel_id = %s,
-                           channel_name = %s, published_at = %s,
-                           duration_seconds = %s, collected_at = %s,
-                           s3_bucket = %s, human_srt_key = %s,
-                           automatic_srt_key = %s
-                       WHERE id = %s""",
-                    (
-                        record["youtube_url"], record["title"], record["channel_id"],
-                        record["channel_name"], record["published_at"],
-                        record["duration_seconds"], record["collected_at"], bucket,
-                        srt_keys.get("human"), srt_keys.get("automatic"), source_id,
-                    ),
+                    """INSERT INTO transcript
+                       (video_id, source_type, language_code, file_format, acquisition_tool,
+                        acquisition_tool_version, s3_bucket, s3_key, size_bytes)
+                       VALUES (%s, %s, %s, 'srt', 'yt-dlp', %s, %s, %s, %s)
+                       ON CONFLICT (video_id, source_type, language_code) DO UPDATE SET
+                         file_format = EXCLUDED.file_format,
+                         acquisition_tool_version = EXCLUDED.acquisition_tool_version,
+                         acquired_at = NOW(), s3_bucket = EXCLUDED.s3_bucket,
+                         s3_key = EXCLUDED.s3_key, size_bytes = EXCLUDED.size_bytes""",
+                    (video_id, source_type, language, getattr(yt_dlp, "version", None),
+                     bucket, srt_keys[track], srt_path.stat().st_size),
                 )
-            else:
-                inserted = conn.execute(
-                    """INSERT INTO yt_transcript__youtube_sources (
-                           video_id, youtube_url, title, channel_id, channel_name,
-                           published_at, duration_seconds, collected_at,
-                           s3_bucket, human_srt_key, automatic_srt_key
-                       ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                       RETURNING id""",
-                    (
-                        record["video_id"], record["youtube_url"], record["title"],
-                        record["channel_id"], record["channel_name"],
-                        record["published_at"], record["duration_seconds"],
-                        record["collected_at"], bucket, srt_keys.get("human"),
-                        srt_keys.get("automatic"),
-                    ),
-                ).fetchone()
-                source_id = inserted[0]
     except Exception as error:  # noqa: BLE001 - report integration failures to the CLI
         print(f"Storage failed after SRT files were downloaded: {error}", file=sys.stderr)
         return 1
 
-    print(f"Collected caption tracks for {record['video_id']} in {directory}")
+    print(f"Collected caption tracks for {video_id} in {directory}")
     for track, key in srt_keys.items():
         print(f"Stored {track} SRT in s3://{bucket}/{key}")
-    print("Stored video metadata and S3 object keys in the shared PostgreSQL database")
+    print("Stored transcript records in the shared PostgreSQL database")
     return 0
 
 

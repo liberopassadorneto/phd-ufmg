@@ -39,16 +39,16 @@ services:
       - .:/workspace
     command:
       - --migrations-dir
-      - /workspace/yt-transcript-collector/migrations
+      - /workspace/pipeline/migrations
       - migrate
     depends_on:
       postgres:
         condition: service_healthy
     restart: "no"
 
-  yt-bootstrap:
+  shared-bootstrap:
     build:
-      context: ./yt-transcript-collector
+      context: ./pipeline/bootstrap
       dockerfile: Dockerfile.bootstrap
     environment:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-phd_ufmg}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env file}@postgres:5432/${POSTGRES_DB:-phd_ufmg}?sslmode=disable"
