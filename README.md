@@ -10,6 +10,10 @@ database records the data and execution provenance produced by each stage.
 2. [Pipeline](#2-pipeline)
    - [Pipeline Steps](#pipeline-steps)
 3. [Shared PostgreSQL and S3](#3-shared-postgresql-and-s3)
+   - [Architecture overview](#architecture-overview)
+   - [PostgreSQL: structured data](#postgresql-structured-data)
+   - [S3-compatible storage: files](#s3-compatible-storage-files)
+   - [End-to-end data flow](#end-to-end-data-flow)
    - [Step-by-step use](#step-by-step-use)
    - [How data is shared](#how-data-is-shared)
 
@@ -53,6 +57,82 @@ execution order and branching, including the rule that only transcripts that
 pass screening proceed to claim extraction.
 
 ## 3. Shared PostgreSQL and S3
+
+### Architecture overview
+
+Greenwich (`150.164.2.42`) hosts the one shared PostgreSQL database and the
+project's S3-compatible object store (`local-s3`). Cuba (`150.164.2.13`) reaches
+both through one SSH tunnel. The services bind to Greenwich's loopback ports;
+the tunnel makes them available on Cuba's loopback without exposing their ports
+directly to the network.
+
+```text
+                          SHARED SOURCE OF TRUTH
+
+  cuba (150.164.2.13)                         greenwich (150.164.2.42)
+  ┌────────────────────┐                     ┌──────────────────────────┐
+  │ pipeline / workers │                     │ 127.0.0.1:15432           │
+  │                    │                     │       │                  │
+  │ localhost:15432 ───┼──── SSH tunnel ────►│       └─► PostgreSQL :5432│
+  │ localhost:19000 ───┼──── SSH tunnel ────►│                          │
+  └────────────────────┘                     │ 127.0.0.1:19000           │
+                                              │       └─► local-s3 :9000 │
+                                              └──────────────────────────┘
+```
+
+### PostgreSQL: structured data
+
+PostgreSQL is the single source of truth for structured records, pipeline
+status, relationships, and provenance. Both hosts read and write the same
+database; there is no separate Cuba database to synchronize.
+
+```text
+cuba worker ── localhost:15432 ── SSH ──┐
+                                         ├── one PostgreSQL database
+Greenwich worker ── localhost:15432 ────┘
+```
+
+An insert or update committed by either host is immediately visible to queries
+from the other host.
+
+### S3-compatible storage: files
+
+The project currently runs `local-s3`, an S3-compatible service, on Greenwich.
+Its host port is `19000` and its container API port is `9000`. The shared
+transcript bucket is `youtube-transcripts`. This is the project's current
+object store; it is not an AWS S3 bucket or a MinIO deployment.
+
+PostgreSQL stores the reference to each file, while S3 stores the file bytes:
+
+```text
+PostgreSQL record                         S3 object
+┌─────────────────────────────┐           ┌──────────────────────────────┐
+│ transcript metadata         │           │ bucket: youtube-transcripts  │
+│ bucket: youtube-transcripts ├──────────►│ key: transcripts/<video>/...│
+│ object key: transcripts/... │           │ file bytes                   │
+└─────────────────────────────┘           └──────────────────────────────┘
+```
+
+Workers on both hosts use the same bucket and object keys. Use unique or
+deterministic object keys so concurrent workers do not overwrite unrelated
+files.
+
+### End-to-end data flow
+
+For example, when a Cuba worker acquires a transcript:
+
+```text
+1. Cuba worker downloads transcript
+2. PUT file to S3: youtube-transcripts/transcripts/<video-id>/transcript.txt
+3. INSERT transcript metadata and object key into PostgreSQL
+4. COMMIT
+5. Greenwich reads the PostgreSQL row and GETs the same S3 object
+```
+
+Upload the object before committing its database reference. Once the commit
+succeeds, Greenwich can discover the row and fetch the object immediately.
+There is no database replication, file copy, `rsync`, or synchronization job
+between Cuba and Greenwich.
 
 ### Step-by-step use
 
