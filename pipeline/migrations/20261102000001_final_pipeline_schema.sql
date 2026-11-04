@@ -407,3 +407,9 @@ CREATE INDEX idx_claim_classification_claim
 DROP TABLE IF EXISTS public.yt_transcript__youtube_sources CASCADE;
 DROP TABLE IF EXISTS public.youtube_sources CASCADE;
 DELETE FROM public.schema_migrations WHERE version IN ('20261018000001', '20261018000002', '20261018000003', '20261018000004');
+
+-- dbmate records the migration in public.schema_migrations on this connection.
+SET search_path TO public;
+
+-- migrate:down
+DROP SCHEMA IF EXISTS phd_pipeline CASCADE;
