@@ -1,6 +1,7 @@
 """Resolve revisions and download just one checkpoint's necessary files."""
 
 import os
+import hashlib
 from pathlib import Path, PurePosixPath
 
 
@@ -49,7 +50,10 @@ def download_repositories(manifests: list[dict], staging: Path) -> list[dict]:
     from huggingface_hub import hf_hub_download
     records = []
     for index, manifest in enumerate(manifests):
-        folder = staging / f"repository-{index}"
+        persistent = os.environ.get("CLAIM_CHECKPOINT_CACHE")
+        key = hashlib.sha256((manifest['repo'] + '@' + manifest['revision']).encode()).hexdigest()
+        folder = Path(persistent) / key if persistent else staging / f"repository-{index}"
+        folder.mkdir(parents=True, exist_ok=True)
         for file in manifest["files"]:
             print(f"Downloading {manifest['repo']} / {file['name']}", flush=True)
             path = Path(hf_hub_download(manifest["repo"], file["name"],

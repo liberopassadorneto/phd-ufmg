@@ -18,6 +18,7 @@ from pathlib import Path
 
 from claim_runner.catalog import MODELS, select_models
 from claim_runner.downloads import download_repositories, repository_manifest
+from claim_runner.prepared import load as load_prepared
 from claim_runner.inputs import read_transcript
 from claim_runner.outputs import export_result
 from claim_runner.resources import (GIB, Monitor, choose_staging, cleanup_staging,
@@ -41,6 +42,8 @@ def parse_args(argv=None, model_alias=None):
     parser.add_argument("--parent-comment-file", type=Path, help="Optional SAGESSE parent comment context")
     parser.add_argument("--output-dir", type=Path, help="Results root; defaults to each model's DEFAULT_OUTPUT")
     parser.add_argument("--staging-dir", type=Path, default=ROOT / ".model-staging")
+    parser.add_argument("--remote-storage", type=Path, help="SSHFS mount for persistent checkpoints, environments and results")
+    parser.add_argument("--offline", action="store_true", help="Use only checkpoints prepared on Greenwich")
     parser.add_argument("--ram-staging-dir", type=Path, default=Path("/dev/shm"))
     parser.add_argument("--runtime-dir", type=Path, default=ROOT / "runtimes")
     parser.add_argument("--python", default=f"{sys.version_info.major}.{sys.version_info.minor}" if model_alias else "3.10",
@@ -156,6 +159,13 @@ def worker_command(args, spec, *extra):
             "python", str((args.runtime_dir / spec.runtime / "run.py").resolve()), *map(str, extra)]
 
 
+def runtime_environment(args, spec):
+    env = os.environ.copy()
+    if args.remote_storage:
+        env['UV_PROJECT_ENVIRONMENT'] = str(args.remote_storage / 'venv' / spec.runtime)
+    return env
+
+
 def ensure_runtime(args, spec, run_dir, cache):
     if spec.runtime not in cache:
         folder = run_dir / "preflight" / spec.runtime
@@ -164,18 +174,20 @@ def ensure_runtime(args, spec, run_dir, cache):
             raise RuntimeError(f"Missing model executor: {project / 'run.py'}")
         if not (project / "uv.lock").is_file():
             raise RuntimeError(f"Missing runtime lock: {project / 'uv.lock'}")
-        additional_budget = 0 if (project / ".venv" / "pyvenv.cfg").is_file() else 4 * GIB
-        if shutil.disk_usage(project).free < args.disk_reserve_gib * GIB + additional_budget:
+        environment = runtime_environment(args, spec)
+        env_path = Path(environment.get('UV_PROJECT_ENVIRONMENT', project / '.venv'))
+        additional_budget = 0 if (env_path / "pyvenv.cfg").is_file() else 4 * GIB
+        if shutil.disk_usage(args.remote_storage or project).free < args.disk_reserve_gib * GIB + additional_budget:
             raise RuntimeError("Insufficient disk for uv runtime setup plus reserve; relocate --runtime-dir")
         print(f"Preparing uv runtime: {spec.runtime}", flush=True)
         setup = command_record(["uv", "sync", "--frozen", "--project", str(project.resolve()),
-                                "--python", args.python], folder / "setup")
+                                "--python", args.python], folder / "setup", env=environment)
         if setup["returncode"] != 0:
             raise RuntimeError(f"Runtime setup failed; see {folder / 'setup/process.log'}")
         probe_dir = folder / "cuda"
         probe_dir.mkdir(parents=True, exist_ok=True)
         cuda = command_record(worker_command(args, spec, "--probe", probe_dir / "cuda.json"),
-                              probe_dir, timeout=120)
+                              probe_dir, timeout=120, env=environment)
         cache[spec.runtime] = {"setup": setup, "cuda": cuda, "folder": str(folder)}
     state = cache[spec.runtime]
     if state["cuda"]["returncode"] != 0:
@@ -188,7 +200,7 @@ def ensure_quantization(args, spec, state):
         folder = Path(state["folder"]) / "nf4"
         folder.mkdir(parents=True, exist_ok=True)
         state["nf4"] = command_record(worker_command(args, spec, "--probe", folder / "nf4.json", "--quantized"),
-                                      folder, timeout=120)
+                                      folder, timeout=120, env=runtime_environment(args, spec))
     return state["nf4"]["returncode"] == 0
 
 
@@ -239,12 +251,17 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
                 raise RuntimeError("NF4 CUDA probe failed and offload fallback is disabled")
             mode = "offload"
         record["preflight_seconds"] = time.perf_counter() - preflight_started
-        manifests = [repository_manifest(spec.repo, spec.revision)]
-        if spec.base_repo:
-            manifests.append(repository_manifest(spec.base_repo))
+        if args.offline:
+            if not args.remote_storage:
+                raise ValueError('--offline requires --remote-storage')
+            manifests = load_prepared(args.remote_storage, spec)
+        else:
+            manifests = [repository_manifest(spec.repo, spec.revision)]
+            if spec.base_repo:
+                manifests.append(repository_manifest(spec.base_repo))
         record["configuration"]["repositories"] = [
             {"repo": manifest["repo"], "revision": manifest["revision"]} for manifest in manifests]
-        download_bytes = sum(m["download_bytes"] for m in manifests)
+        download_bytes = 0 if args.offline else sum(m["download_bytes"] for m in manifests)
         # Include CPU loading/conversion buffers and room for a fallback attempt.
         memory_bytes = int(spec.parameters_b * 1e9 * 2 * 1.35) + 3 * GIB
         parent, storage_kind = choose_staging(download_bytes, memory_bytes, args.staging_dir.resolve(),
@@ -259,12 +276,12 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
         monitor.phase = "download"
         monitor.attach(os.getpid())
         try:
-            repositories = download_repositories(manifests, staging)
+            repositories = manifests if args.offline else download_repositories(manifests, staging)
         finally:
             record["download_seconds"] = time.perf_counter() - before
             record["download_resources"] = monitor.stop()
         record["staging_peak_bytes"] = directory_size(staging)
-        environment = os.environ.copy()
+        environment = runtime_environment(args, spec)
         environment.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1",
                            HF_HOME=str(staging / "hf-home"), HF_XET_CACHE=str(staging / "xet"),
                            HF_HUB_DISABLE_XET="1", TOKENIZERS_PARALLELISM="false",
@@ -340,6 +357,23 @@ def main(argv=None, model_alias=None):
         for spec in MODELS:
             print(f"{spec.alias:24} {spec.repo} [{spec.precision}; {spec.language}; {spec.task}]")
         return 0
+    if args.remote_storage:
+        root = args.remote_storage.expanduser().absolute()
+        check = subprocess.run(['findmnt', '-n', '-o', 'FSTYPE,TARGET,SOURCE', '--mountpoint', str(root)], capture_output=True, text=True)
+        fields = check.stdout.strip().split()
+        if check.returncode or len(fields) != 3 or fields[0] != 'fuse.sshfs' or fields[2] != 'marcele_araponga@150.164.2.42:/home/marcele_araponga/phd-models':
+            raise RuntimeError(f'Expected Greenwich SSHFS mount at {root}; refusing local fallback')
+        args.remote_storage = root
+        for directory in ('tmp', 'checkpoints', 'results', 'venv', 'cache/uv', 'cache/xdg', 'cache/torch', 'cache/triton', 'cache/cuda', 'cache/pip', 'huggingface', 'cache/nltk'):
+            (root / directory).mkdir(parents=True, exist_ok=True)
+        for key, path in {'UV_CACHE_DIR':'cache/uv', 'XDG_CACHE_HOME':'cache/xdg', 'TORCH_HOME':'cache/torch', 'TRITON_CACHE_DIR':'cache/triton', 'CUDA_CACHE_PATH':'cache/cuda', 'PIP_CACHE_DIR':'cache/pip', 'TMPDIR':'tmp', 'CLAIM_CHECKPOINT_CACHE':'checkpoints', 'CLAIM_NLTK_DIR':'cache/nltk'}.items():
+            os.environ[key] = str(root / path)
+        tempfile.tempdir = str(root / 'tmp')
+        args.staging_dir = root / 'tmp'
+        args.ram_staging_dir = root / 'tmp' / '.disabled-ram-fallback'
+        args.output_dir = args.output_dir or root / 'results'
+        if not args.output_dir.resolve().is_relative_to(root.resolve()):
+            raise RuntimeError('Remote profile requires output directory on the SSHFS mount')
     if not shutil.which("uv"):
         raise RuntimeError("uv is not installed")
     if platform.system() != "Linux":

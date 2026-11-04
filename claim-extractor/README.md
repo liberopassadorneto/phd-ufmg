@@ -1,5 +1,45 @@
 # Claim Extractor
 
+## Greenwich SSHFS (experimental)
+
+Prepare checkpoints on Greenwich (after `uv run hf auth login` for gated models):
+
+```bash
+cd ~/phd-ufmg/claim-extractor
+uv run --frozen prepare-models.py --models babelscape-t5 --storage ~/phd-models
+```
+
+Use `--models all` to prepare the catalog. On Cuba, after mounting Greenwich,
+pass `--offline --remote-storage ~/greenwich-models` to `run_models.py`.
+Offline refers to checkpoints: uv may still need network access to install the
+separate model environments. The manifest validates SHA-256 before loading.
+
+The optional `--remote-storage ~/greenwich-models` profile requires the exact
+Greenwich SSHFS mount. It stores per-model environments, checkpoints, caches,
+temporary files and results there. Checkpoints are reused by repository and
+revision; do not delete them while a run is active. The Hugging Face login
+remains in its existing location. The project source remains local.
+
+Run `bash run-greenwich.sh` from Cuba to execute the catalog sequentially with
+separate logs and a 7200-second timeout per attempt. Set
+`MODEL_TIMEOUT_SECONDS` to change that limit. Babelscape uses a 512-token input
+ceiling and both generic Mistral models use `prompts/shared-zero-shot-v2.md`.
+The script continues after individual failures and returns nonzero if any fail.
+It uses a new timestamped results directory on every invocation.
+
+For a single model, set `UV_PROJECT_ENVIRONMENT` and `UV_CACHE_DIR` on the
+mounted filesystem before running the root uv project, then pass
+`--remote-storage ~/greenwich-models`. Do not unmount during a run. Reconnect
+SSHFS using the server's existing mount procedure after a disconnect and verify
+with `findmnt -T ~/greenwich-models` before retrying. Remote operation has not
+yet been validated with real models; monitor local disk use during the pilot.
+
+## Future work
+
+- TODO: Prepare Qwen3.5-2B supervised fine-tuning with QLoRA once annotated
+  transcript-to-claim training examples are available. Keep training and
+  held-out evaluation transcripts separate.
+
 Run the models sequentially on cuba. Each model has its own Python executor,
 uv project and lockfile. Results contain native model responses and processing
 measurements only.

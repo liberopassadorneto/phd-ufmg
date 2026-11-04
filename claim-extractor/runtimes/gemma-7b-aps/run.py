@@ -2,6 +2,7 @@
 """Run google/gemma-7b-aps-it; published protocol and cuba memory adaptations below."""
 
 import sys
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,7 +43,7 @@ def load_model(job):
 def prepare_chunks(job, model, tokenizer):
     from claim_runner.inputs import make_aps, read_aps, fit_aps
     text = job['input']['text']
-    aps = read_aps(Path(job['aps_input']), text) if job.get('aps_input') else make_aps(text, ROOT / '.runner-nltk')
+    aps = read_aps(Path(job['aps_input']), text) if job.get('aps_input') else make_aps(text, Path(os.environ.get('CLAIM_NLTK_DIR', ROOT / '.runner-nltk')))
     capacity = input_capacity(tokenizer, model, job, causal=True)
     return fit_aps(aps['records'], lambda messages: len(tokenizer.apply_chat_template(
         messages, add_generation_prompt=True)) <= capacity)
