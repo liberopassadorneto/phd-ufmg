@@ -1,0 +1,16 @@
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-vpn
+    hostname: tailscale-vpn
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      # ativa modo userspace (dispensa /dev/net/tun e NET_ADMIN) e expõe SOCKS5/HTTP proxy
+      - TS_USERSPACE=true
+      - TS_EXTRA_ARGS=--socks5-server=localhost:1055 --outbound-http-proxy-listen=localhost:1055
+    volumes:
+      - ./tailscale-state:/var/lib/tailscale
+    ports:
+      - "127.0.0.1:1055:1055"
+    restart: unless-stopped
