@@ -8,8 +8,9 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "boto3>=1.43.117",
-    "yt-dlp[default]>=2026.10.21",
+    "boto3>=1.44.2",
+    "psycopg2-binary>=2.9.13",
+    "yt-dlp[default]>=2026.10.26",
 ]
 
 [project.scripts]

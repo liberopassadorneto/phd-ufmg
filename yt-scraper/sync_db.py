@@ -114,7 +114,7 @@ def sync_all_folders(uploader, output_dir):
         if enviados_agora > 0:
             print(f"✓ {video_id}: {enviados_agora} arquivos enviados (ignorados: {ignorados})")
         else:
-            print(f"⏭️ {video_id}: Já 100% sincronizado (ignorados: {ignorados})")
+            print(f"{video_id}: Já 100% sincronizado (ignorados: {ignorados})")
 
 if __name__ == "__main__":
     cfg = load_sync_config("config.conf")
