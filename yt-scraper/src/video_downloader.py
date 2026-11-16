@@ -9,6 +9,19 @@ import yt_dlp
 current_proxy_index = 0
 
 
+class _SilentLogger:
+    """Suprime mensagens de debug, avisos e progresso do yt-dlp."""
+
+    def debug(self, msg):
+        pass
+
+    def warning(self, msg):
+        pass
+
+    def error(self, msg):
+        pass
+
+
 def check_subtitles_availability(video_id, proxy=None, cookiefile=None):
     """
     Verifica quais tipos de legenda em português (manual e/ou automática)
@@ -119,6 +132,8 @@ def download_media(
         "outtmpl": f"{base_dir}/%(id)s.%(ext)s",
         "quiet": True,
         "no_warnings": True,
+        "noprogress": True,
+        "logger": _SilentLogger(),
         "cookiefile": temp_cookie_path,
         "extractor_args": {"youtube": ["player_client=android"]},
         "remote_components": "ejs:github",
@@ -127,7 +142,7 @@ def download_media(
     if target_proxy:
         base_ydl_opts["proxy"] = target_proxy
 
-    # legendas
+    # Legendas
     if download_subtitles:
         subs_status = check_subtitles_availability(
             video_id, target_proxy, cookiefile=temp_cookie_path
@@ -145,7 +160,7 @@ def download_media(
                 ydl.download([url])
             _organize_subtitle_files(base_dir, video_id, subs_status)
 
-    # thumbnail
+    # Thumbnail
     if download_thumbnail:
         thumb_options = base_ydl_opts.copy()
         thumb_options.update({
@@ -155,7 +170,7 @@ def download_media(
         with yt_dlp.YoutubeDL(thumb_options) as ydl:
             ydl.download([url])
 
-    # audio
+    # Áudio
     if download_audio:
         audio_options = base_ydl_opts.copy()
         audio_options.update({
@@ -169,7 +184,7 @@ def download_media(
         with yt_dlp.YoutubeDL(audio_options) as ydl:
             ydl.download([url])
 
-    # vídeo base -> frames
+    # Vídeo base -> frames
     if download_frames:
         video_options = base_ydl_opts.copy()
         video_options.update({
@@ -231,21 +246,6 @@ def process_video(
     """Função orquestradora que retorna 'SUCCESS', 'BOT_BLOCK' ou 'ERROR'."""
     global current_proxy_index
 
-    selected_tasks = [
-        name
-        for name, enabled in [
-            ("audio", download_audio),
-            ("subtitles", download_subtitles),
-            ("frames", download_frames),
-            ("thumbnail", download_thumbnail),
-        ]
-        if enabled
-    ]
-    print(
-        f"\n--- Starting processing: {video_id} [{', '.join(selected_tasks)}]"
-        " ---"
-    )
-
     if use_proxies and proxy_list:
         available_networks = proxy_list
     else:
@@ -282,8 +282,8 @@ def process_video(
                 or "cookies" in error_str
             ):
                 print(
-                    f"[{video_id}] bloqueio detectado na rede `{network_name}`."
-                    " >> iniciando rotação de IP."
+                    f"[{video_id}] Bloqueio detectado na rede '{network_name}'."
+                    " Iniciando rotação de IP."
                 )
                 current_proxy_index = (current_proxy_index + 1) % len(
                     available_networks
@@ -294,18 +294,18 @@ def process_video(
                     current_proxy_index % len(available_networks)
                 ]
                 next_name = (
-                    "conexão direta" if next_target is None else next_target
+                    "Conexao Direta" if next_target is None else next_target
                 )
                 print(
-                    f"[{video_id}] >> Roteando tráfego para a nova origem:"
-                    f" `{next_name}`."
+                    f"[{video_id}] Roteando trafego para a nova origem:"
+                    f" '{next_name}'."
                 )
             else:
-                print(f"[{video_id}] Failed to process: {error_str}")
+                print(f"[{video_id}] Erro no processamento: {error_str}")
                 return "ERROR"
 
     print(
-        f"[{video_id}] falha crítica. Todas as conexões falharam por bloqueio."
+        f"[{video_id}] Falha critica: todas as conexoes falharam por bloqueio."
     )
     return "BOT_BLOCK"
 
@@ -323,7 +323,7 @@ if __name__ == "__main__":
         default=".",
     )
 
-    # flags de seleção modular
+    # Flags de seleção modular
     parser.add_argument(
         "--audio", action="store_true", help="Download audio (.mp3)"
     )
@@ -345,7 +345,7 @@ if __name__ == "__main__":
         help="Download video thumbnail",
     )
 
-    # flags de rede / proxy
+    # Flags de rede / proxy
     parser.add_argument(
         "--use-proxies",
         action="store_true",

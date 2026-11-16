@@ -17,7 +17,7 @@ from storage_sync import StorageSyncManager, TranscriptRecord
 def load_configuration(conf_path):
     """Lê e valida o arquivo de configuração .conf."""
     if not os.path.exists(conf_path):
-        print(f"Error: Configuration file '{conf_path}' not found.")
+        print(f"[ERRO] Arquivo de configuracao '{conf_path}' nao encontrado.")
         sys.exit(1)
 
     config = configparser.ConfigParser()
@@ -28,7 +28,6 @@ def load_configuration(conf_path):
 def send_telegram_message(text, bot_token, chat_id):
     """Envia uma mensagem de texto para o Telegram."""
     if not bot_token or bot_token == "SEU_BOT_TOKEN_AQUI":
-        print("[Telegram Warning] Token not configured. Message ignored.")
         return False
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -38,14 +37,14 @@ def send_telegram_message(text, bot_token, chat_id):
         response = requests.post(url, json=payload, timeout=10)
         return response.status_code == 200
     except Exception as e:
-        print(f"[Telegram Error] Failed to send message: {e}")
+        print(f"[TELEGRAM][ERRO] Falha ao enviar mensagem: {e}")
         return False
 
 
 def load_and_filter_csv(csv_path, synced_ids: set[str]):
     """Lê o CSV original e remove os IDs que já constam como sincronizados no Postgres."""
     if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"CSV file not found at: {csv_path}")
+        raise FileNotFoundError(f"Arquivo CSV nao encontrado em: {csv_path}")
 
     with open(csv_path, mode="r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -64,8 +63,8 @@ def load_and_filter_csv(csv_path, synced_ids: set[str]):
 
     original_total = len(rows)
     print(
-        f"[Step 1] Original total: {original_total} | Already synced in DB:"
-        f" {already_processed} | Pending: {len(pending_rows)}"
+        f"[INIT] Total CSV: {original_total} | Ja sincronizados no DB:"
+        f" {already_processed} | Pendentes: {len(pending_rows)}"
     )
 
     pending_csv_path = "csv_pending_execution.csv"
@@ -136,6 +135,7 @@ def resolve_downloaded_modality_label(download_opts: dict) -> str:
 
 def persist_and_cleanup_video(
     sync_manager: StorageSyncManager,
+    profile_id: int,
     video_id: str,
     abs_output_dir: str,
     download_opts: dict,
@@ -149,7 +149,7 @@ def persist_and_cleanup_video(
     if not os.path.exists(video_folder):
         return
 
-    # salva os dados no bucket
+    # Etapa 1: Upload para o bucket S3
     uploaded_assets = sync_manager.upload_video_assets_to_s3(
         youtube_video_id=str(video_id),
         video_folder=video_folder,
@@ -159,17 +159,22 @@ def persist_and_cleanup_video(
         shutil.rmtree(video_folder, ignore_errors=True)
         return
 
+    print(
+        f"[Perfil {profile_id}] [{video_id}] [S3] Upload concluido"
+        f" ({len(uploaded_assets)} arquivo(s)).",
+        flush=True,
+    )
+
     modality_str = resolve_downloaded_modality_label(download_opts)
     total_size_bytes = sum(a["size_bytes"] for a in uploaded_assets)
 
-    # verifica se há arquivos de legenda entre os uploads para definir source_type e s3_key
     subtitle_assets = [
         a
         for a in uploaded_assets
         if a["filename"].lower().endswith((".srt", ".vtt"))
     ]
 
-    # verificacoes para adicao no banco postgres
+    # Etapa 2: Registro no Postgres
     if subtitle_assets:
         for asset in subtitle_assets:
             source_type = (
@@ -188,7 +193,6 @@ def persist_and_cleanup_video(
             )
             sync_manager.save_transcript_to_db(record)
     else:
-        # caso tenha baixado apenas AUDIO / FRAMES / THUMB (sem legendas)
         primary_asset = uploaded_assets[0]
         s3_key_ref = (
             f"data/{video_id}/frames/"
@@ -206,7 +210,13 @@ def persist_and_cleanup_video(
         )
         sync_manager.save_transcript_to_db(record)
 
-    # exclui dados brutos locais após confirmação no S3 e Postgres
+    print(
+        f"[Perfil {profile_id}] [{video_id}] [POSTGRES] Metadados salvos"
+        f" ({modality_str}).",
+        flush=True,
+    )
+
+    # Etapa 3: Exclusão dos dados brutos locais
     shutil.rmtree(video_folder, ignore_errors=True)
 
 
@@ -250,7 +260,7 @@ def worker_process(
         cookie_name = os.path.basename(cookie_path)
         abs_output_dir = os.path.abspath(output_dir)
 
-        for row in rows:
+        for idx, row in enumerate(rows, start=1):
             video_id = row.get("Video_id") or row.get("video_id")
             if not video_id:
                 continue
@@ -273,12 +283,31 @@ def worker_process(
             )
 
             combined_output = f"{proc.stdout}\n{proc.stderr}"
-            print(combined_output.strip())
+
+            # Filtra apenas eventos relevantes de rede/bloqueio emitidos pelo downloader
+            for line in combined_output.splitlines():
+                clean_line = line.strip()
+                if any(
+                    tag in clean_line.lower()
+                    for tag in (
+                        "bloqueio detectado",
+                        "roteando trafego",
+                        "falha critica",
+                        "erro no processamento",
+                    )
+                ):
+                    print(f"[Perfil {profile_id}] {clean_line}", flush=True)
 
             if proc.returncode == 0:
+                print(
+                    f"[Perfil {profile_id}] [{video_id}] ({idx}/{len(rows)})"
+                    " [DOWNLOAD] Concluido.",
+                    flush=True,
+                )
                 try:
                     persist_and_cleanup_video(
                         sync_manager=sync_manager,
+                        profile_id=profile_id,
                         video_id=video_id,
                         abs_output_dir=abs_output_dir,
                         download_opts=download_opts,
@@ -288,20 +317,21 @@ def worker_process(
                         pending_videos.remove(row)
                 except Exception as sync_err:
                     print(
-                        f"[Sync Error] Falha ao salvar vídeo {video_id} no"
-                        f" S3/DB: {sync_err}"
+                        f"[Perfil {profile_id}] [{video_id}] [ERRO][SYNC] Falha"
+                        f" ao salvar no S3/DB: {sync_err}",
+                        flush=True,
                     )
             else:
                 if (
                     "bloqueio detectado" in combined_output.lower()
-                    or "falha crítica" in combined_output.lower()
+                    or "falha critica" in combined_output.lower()
                 ):
                     block_detected = True
                     block_msg = (
-                        f"⚠️ *Bloqueio Detectado (Perfil {profile_id})*\n"
+                        f"*Bloqueio Detectado (Perfil {profile_id})*\n"
                         f"- Cookie: `{cookie_name}`\n"
-                        f"- Vídeo: `{video_id}`\n"
-                        "- Ação: Worker encerrado preventivamente."
+                        f"- Video: `{video_id}`\n"
+                        "- Acao: Worker encerrado preventivamente."
                     )
                     send_telegram_message(block_msg, bot_token, chat_id)
                     break
@@ -316,14 +346,14 @@ def worker_process(
 
         report_content = (
             f"========================================\n"
-            f"RELATÓRIO DE EXTRAÇÃO - PERFIL {profile_id}\n"
+            f"RELATORIO DE EXTRACAO - PERFIL {profile_id}\n"
             f"========================================\n"
             f"Arquivo de Cookie: {cookie_name}\n"
-            f"Total de Vídeos Alocados: {len(rows)}\n"
-            f"Vídeos Extraídos e Sincronizados: {extracted_videos}\n"
-            f"Vídeos Pendentes/Restantes: {len(pending_videos)}\n"
-            f"Status Final: {'BLOQUEADO (Bot Block)' if block_detected else 'CONCLUÍDO'}\n"
-            f"Tempo de Execução: {formatted_time}\n"
+            f"Total de Videos Alocados: {len(rows)}\n"
+            f"Videos Extraidos e Sincronizados: {extracted_videos}\n"
+            f"Videos Pendentes/Restantes: {len(pending_videos)}\n"
+            f"Status Final: {'BLOQUEADO (Bot Block)' if block_detected else 'CONCLUIDO'}\n"
+            f"Tempo de Execucao: {formatted_time}\n"
             f"========================================\n"
         )
 
@@ -331,12 +361,12 @@ def worker_process(
             f.write(report_content)
 
         telegram_msg = (
-            f"*Relatório do Perfil {profile_id}*\n\n"
+            f"*Relatorio do Perfil {profile_id}*\n\n"
             f"*Cookie:* `{cookie_name}`\n"
             f"*Sincronizados (S3 + DB):* {extracted_videos}/{len(rows)}\n"
             f"*Pendentes:* {len(pending_videos)}\n"
             f"*Tempo:* {formatted_time}\n"
-            f"*Status:* {'🚫 Bloqueado pelo YouTube' if block_detected else '✅ Finalizado com Sucesso'}"
+            f"*Status:* {'BLOQUEADO' if block_detected else 'CONCLUIDO'}"
         )
         send_telegram_message(telegram_msg, bot_token, chat_id)
 
@@ -417,15 +447,16 @@ def main():
 
     cookie_files = sorted(glob.glob(os.path.join(cookies_dir, "*.txt")))
     if not cookie_files:
-        print(f"Error: No .txt cookie file found in '{cookies_dir}'.")
+        print(
+            f"[ERRO] Nenhum arquivo de cookie .txt encontrado em '{cookies_dir}'."
+        )
         sys.exit(1)
 
-    print(f"Found {len(cookie_files)} cookies for processing.")
-    print(f"Enabled extraction modules: {', '.join(active_modules)}")
+    print(f"[INIT] Cookies encontrados: {len(cookie_files)}")
+    print(f"[INIT] Modulos ativos: {', '.join(active_modules)}")
     if use_proxies and raw_proxies:
-        print(f"Proxy rotation enabled: {raw_proxies}")
+        print(f"[INIT] Rotacao de proxies ativa: {raw_proxies}")
 
-    # consulta vídeos já registrados no Postgres para filtrar o CSV
     root_sync = StorageSyncManager(pg_config=pg_config, s3_config=s3_config)
     synced_ids = root_sync.get_already_synced_youtube_ids()
 
@@ -438,10 +469,10 @@ def main():
     ) = load_and_filter_csv(target_csv, synced_ids)
 
     if not pending_records:
-        print("All videos from the CSV have already been synced. Exiting.")
+        print("[INIT] Todos os videos do CSV ja estao sincronizados. Encerrando.")
         send_telegram_message(
-            "ℹ️ *Aviso:* Todos os vídeos do CSV informado já foram processados"
-            " e sincronizados anteriormente.",
+            "*Aviso:* Todos os videos do CSV informado ja foram processados e"
+            " sincronizados anteriormente.",
             bot_token,
             chat_id,
         )
@@ -469,15 +500,15 @@ def main():
         f"Ativo ({raw_proxies})" if (use_proxies and raw_proxies) else "Direto"
     )
     start_msg = (
-        f"*INICIANDO NOVO CICLO DE EXTRAÇÃO*\n\n"
-        f"*Módulos Ativos:* `{', '.join(active_modules)}`\n"
+        f"*INICIANDO NOVO CICLO DE EXTRACAO*\n\n"
+        f"*Modulos Ativos:* `{', '.join(active_modules)}`\n"
         f"*Rede/Proxies:* `{proxy_status_str}`\n"
         f"*Total no CSV Alvo:* {original_total}\n"
-        f"*Já Sincronizados no DB:* {already_processed}\n"
+        f"*Ja Sincronizados no DB:* {already_processed}\n"
         f"*Faltam Processar:* {len(pending_records)}\n"
         f"*Perfis/Cookies Ativos:* {num_cookies}\n"
-        f"*Média por Perfil:* ~{slice_size} vídeos\n\n"
-        " _Fluxo ativo: Download → S3 → Postgres → Limpeza local por vídeo._"
+        f"*Media por Perfil:* ~{slice_size} videos\n\n"
+        "_Fluxo ativo: Download -> S3 -> Postgres -> Limpeza local por video._"
     )
     send_telegram_message(start_msg, bot_token, chat_id)
 
@@ -508,7 +539,7 @@ def main():
                 res = future.result()
                 results.append(res)
             except Exception as e:
-                print(f"[Processing Error] Failure in execution profile: {e}")
+                print(f"[ERRO][WORKER] Falha na execucao do perfil: {e}")
 
     all_unextracted = []
     total_extracted = 0
@@ -542,13 +573,13 @@ def main():
     )
     summary_text = (
         f"========================================\n"
-        f"RESUMO DE EXECUÇÃO PARALELA\n"
+        f"RESUMO DE EXECUCAO PARALELA\n"
         f"========================================\n"
         f"Data/Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"Módulos extraídos: {', '.join(active_modules)}\n"
+        f"Modulos extraidos: {', '.join(active_modules)}\n"
         f"Perfis de cookies utilizados: {num_cookies}\n"
-        f"Total de vídeos sincronizados nesta sessão: {total_extracted}\n"
-        f"Total de vídeos que ainda faltam: {len(all_unextracted)}\n"
+        f"Total de videos sincronizados nesta sessao: {total_extracted}\n"
+        f"Total de videos que ainda faltam: {len(all_unextracted)}\n"
         f"Contas/Cookies que sofreram bloqueio: {total_blocks}\n"
         f"Tempo total decorrido: {overall_total_time}\n"
         f"========================================\n"
@@ -563,18 +594,18 @@ def main():
         os.remove(filtered_csv_path)
 
     final_msg = (
-        f"*EXECUÇÃO PARALELA FINALIZADA*\n\n"
-        f"*Módulos:* `{', '.join(active_modules)}`\n"
-        f"*Total Sincronizados Nesta Sessão:* {total_extracted}\n"
+        f"*EXECUCAO PARALELA FINALIZADA*\n\n"
+        f"*Modulos:* `{', '.join(active_modules)}`\n"
+        f"*Total Sincronizados Nesta Sessao:* {total_extracted}\n"
         f"*Ainda Pendentes:* {len(all_unextracted)}\n"
         f"*Contas Bloqueadas:* {total_blocks}/{num_cookies}\n"
         f"*Tempo Total:* {overall_total_time}\n\n"
-        "Os relatórios individuais e o resumo geral foram salvos na pasta"
+        "Os relatorios individuais e o resumo geral foram salvos na pasta"
         f" `{final_reports_dir}/`.\n"
-        f"O CSV final com as pendências foi atualizado em `{final_pending_csv}`."
+        f"O CSV final com as pendencias foi atualizado em `{final_pending_csv}`."
     )
     send_telegram_message(final_msg, bot_token, chat_id)
-    print("\nExecution and final consolidation completed successfully!")
+    print("\n[FIM] Execucao e consolidacao final concluidas com sucesso.")
 
 
 if __name__ == "__main__":
