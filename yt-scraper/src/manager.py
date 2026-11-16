@@ -219,10 +219,12 @@ def worker_process(
     work_dir = os.path.abspath(f"worker_env_profile_{profile_id}")
     os.makedirs(work_dir, exist_ok=True)
 
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    source_downloader = os.path.join(script_dir, "video_downloader.py")
+
     shutil.copy(cookie_path, os.path.join(work_dir, "cookies_base.txt"))
     downloader_copy = os.path.join(work_dir, "video_downloader.py")
-    shutil.copy("video_downloader.py", downloader_copy)
-
+    shutil.copy(source_downloader, downloader_copy)
     sync_manager = StorageSyncManager(pg_config=pg_config, s3_config=s3_config)
 
     with open(csv_slice["path"], mode="r", encoding="utf-8") as f:
