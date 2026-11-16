@@ -243,7 +243,8 @@ def process_video(
     use_proxies=False,
     proxy_list=None,
 ):
-    """Função orquestradora que retorna 'SUCCESS', 'UNAVAILABLE', 'BOT_BLOCK' ou 'ERROR'."""
+    """Função orquestradora que retorna 'SUCCESS', 'UNAVAILABLE', 'BOT_BLOCK',
+    'SESSION_BLOCK' ou 'ERROR'."""
     global current_proxy_index
 
     if use_proxies and proxy_list:
@@ -276,16 +277,14 @@ def process_video(
         except Exception as e:
             error_str = str(e).lower()
 
-            block_indicators = (
+            # Único sinal confiável de IP bloqueado/sinalizado pelo YouTube.
+            # HTTP 429 (ex.: legendas) e rate-limit de sessão NÃO indicam IP bloqueado.
+            ip_block_indicators = (
                 "sign in to confirm you're not a bot",
                 "sign in to confirm you’re not a bot",
-                "429",
-                "too many requests",
-                "rate-limited",
-                "try again later",
             )
 
-            if any(indicator in error_str for indicator in block_indicators):
+            if any(indicator in error_str for indicator in ip_block_indicators):
                 print(
                     f"[{video_id}] Bloqueio/Rate-limit detectado na rede '{network_name}'."
                 )
@@ -307,8 +306,33 @@ def process_video(
                     )
                 continue
 
+            # Rate-limit de sessão (cookie/conta): não é bloqueio de IP, então
+            # trocar de proxy não resolve. Precisa vir antes de "unavailable",
+            # pois a mensagem do YouTube contém "video unavailable" e o vídeo
+            # seria descartado por engano.
+            if "rate-limited by youtube" in error_str:
+                print(
+                    f"[{video_id}] Rate-limit de sessao (cookie) detectado."
+                    " Nao e bloqueio de IP."
+                )
+                return "SESSION_BLOCK"
+
+            # 429 pontual (ex.: legendas): erro transitório, não é bloqueio.
+            rate_limit_indicators = (
+                "http error 429",
+                "too many requests",
+            )
+
+            if any(indicator in error_str for indicator in rate_limit_indicators):
+                print(
+                    f"[{video_id}] Erro no processamento (rate-limit, nao e"
+                    f" bloqueio de IP): {error_str}"
+                )
+                return "ERROR"
+
             unavailable_indicators = (
                 "video unavailable",
+                "this video is not available",
                 "this video is unavailable",
                 "private video",
                 "this video is private",
@@ -418,5 +442,7 @@ if __name__ == "__main__":
 
     if status == "UNAVAILABLE":
         sys.exit(2)
+    elif status == "SESSION_BLOCK":
+        sys.exit(3)
     elif status != "SUCCESS":
         sys.exit(1)

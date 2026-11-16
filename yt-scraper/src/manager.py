@@ -266,6 +266,7 @@ def worker_process(
         pending_videos = rows.copy()
         extracted_videos = 0
         block_detected = False
+        session_blocked = False
         cookie_name = os.path.basename(cookie_path)
         abs_output_dir = os.path.abspath(output_dir)
 
@@ -306,6 +307,7 @@ def worker_process(
                     tag in clean_line.lower()
                     for tag in (
                         "bloqueio/rate-limit detectado",
+                        "rate-limit de sessao",
                         "roteando trafego",
                         "falha critica",
                         "erro no processamento",
@@ -347,6 +349,24 @@ def worker_process(
                 if row in pending_videos:
                     pending_videos.remove(row)
                 continue
+            elif proc.returncode == 3:
+                session_blocked = True
+                print(
+                    f">> [PERFIL {profile_id}] [{video_id}] [COOKIE BLOQUEADO]"
+                    f" Rate-limit de sessao do YouTube (cookie '{cookie_name}')."
+                    " Worker encerrado.",
+                    flush=True,
+                )
+                session_msg = (
+                    f"*Cookie com Rate-limit de Sessao (Perfil {profile_id})*\n"
+                    f"- Cookie: `{cookie_name}`\n"
+                    f"- Video: `{video_id}`\n"
+                    "- Causa: sessao limitada pelo YouTube (ate ~1h); nao e"
+                    " bloqueio de IP.\n"
+                    "- Acao: Worker encerrado preventivamente."
+                )
+                send_telegram_message(session_msg, bot_token, chat_id)
+                break
             else:
                 if (
                     "bloqueio/rate-limit detectado" in combined_output.lower()
@@ -370,6 +390,13 @@ def worker_process(
             "relatorios", f"relatorio_perfil_{profile_id}.txt"
         )
 
+        if session_blocked:
+            status_label = "BLOQUEADO (Cookie/Sessao)"
+        elif block_detected:
+            status_label = "BLOQUEADO (Bot Block)"
+        else:
+            status_label = "CONCLUIDO"
+
         report_content = (
             f"========================================\n"
             f"RELATORIO DE EXTRACAO - PERFIL {profile_id}\n"
@@ -378,7 +405,7 @@ def worker_process(
             f"Total de Videos Alocados: {len(rows)}\n"
             f"Videos Extraidos e Sincronizados: {extracted_videos}\n"
             f"Videos Pendentes/Restantes: {len(pending_videos)}\n"
-            f"Status Final: {'BLOQUEADO (Bot Block)' if block_detected else 'CONCLUIDO'}\n"
+            f"Status Final: {status_label}\n"
             f"Tempo de Execucao: {formatted_time}\n"
             f"========================================\n"
         )
@@ -392,7 +419,7 @@ def worker_process(
             f"*Sincronizados (S3 + DB):* {extracted_videos}/{len(rows)}\n"
             f"*Pendentes:* {len(pending_videos)}\n"
             f"*Tempo:* {formatted_time}\n"
-            f"*Status:* {'BLOQUEADO' if block_detected else 'CONCLUIDO'}"
+            f"*Status:* {status_label}"
         )
         send_telegram_message(telegram_msg, bot_token, chat_id)
 
@@ -400,7 +427,7 @@ def worker_process(
             "profile_id": profile_id,
             "extracted": extracted_videos,
             "pending": pending_videos,
-            "blocked": block_detected,
+            "blocked": block_detected or session_blocked,
             "time": total_time,
             "fieldnames": headers,
         }
