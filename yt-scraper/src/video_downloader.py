@@ -4,23 +4,9 @@ import os
 import shutil
 import subprocess
 import sys
-import requests
 import yt_dlp
 
 current_proxy_index = 0
-
-
-def send_telegram_alert(text, bot_token, chat_id):
-    """Notifica o Telegram sobre eventos de rede com baixa verbosidade visual."""
-    if not bot_token or not chat_id or bot_token == "SEU_BOT_TOKEN_AQUI":
-        return
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, json=payload, timeout=5)
-    except Exception:
-        pass
-
 
 def check_subtitles_availability(video_id, proxy=None, cookiefile=None):
     """
@@ -199,7 +185,7 @@ def download_media(
                 ydl.download([url])
             _organize_subtitle_files(base_dir, video_id, subs_status)
 
-    # download da thumbnail (independente do áudio)
+    # download da thumbnail
     if download_thumbnail:
         thumb_options = base_ydl_opts.copy()
         thumb_options.update({
@@ -279,12 +265,10 @@ def process_video(
     download_thumbnail=True,
     output_dir="output",
     cookies_dir=".",
-    bot_token=None,
-    chat_id=None,
     use_proxies=False,
     proxy_list=None,
 ):
-    """Função orquestradora que retorna o status do download."""
+    """Função orquestradora que retorna o status do download ('SUCCESS', 'BOT_BLOCK' ou 'ERROR')."""
     global current_proxy_index
 
     if is_already_processed(
@@ -314,7 +298,7 @@ def process_video(
     )
 
     if use_proxies and proxy_list:
-        available_networks = proxy_list  # ao receber uma lista de proxies usa exclusivamente eles
+        available_networks = proxy_list
     else:
         available_networks = [None]
 
@@ -348,14 +332,10 @@ def process_video(
                 or "bot" in error_str
                 or "cookies" in error_str
             ):
-                msg_alert = (
-                    f"⚠️ Bloqueio detectado no vídeo `{video_id}`\n"
-                    f"- Rede bloqueada: `{network_name}`\n"
-                    "- Etapa: Início de rotação de IP."
+                print(
+                    f"[{video_id}] bloqueio detectado na rede `{network_name}`."
+                    ">> iniciando rotação de IP."
                 )
-                print(f"[{video_id}] {msg_alert}")
-                send_telegram_alert(msg_alert, bot_token, chat_id)
-
                 current_proxy_index = (current_proxy_index + 1) % len(
                     available_networks
                 )
@@ -367,23 +347,19 @@ def process_video(
                 next_name = (
                     "conexão direta" if next_target is None else next_target
                 )
-                msg_transition = (
-                    ">> roteando tráfego de extração para a nova origem:"
+                print(
+                    f"[{video_id}] >> Roteando tráfego para a nova origem:"
                     f" `{next_name}`."
                 )
-                print(f"[{video_id}] {msg_transition}")
-                send_telegram_alert(msg_transition, bot_token, chat_id)
             else:
                 print(f"[{video_id}] Failed to process: {error_str}")
                 return "ERROR"
 
-    msg_fatal = (
-        "🚫 Falha crítica. Todos os túneis SSH e conexões locais falharam no"
-        f" vídeo `{video_id}`."
+    print(
+        f"[{video_id}] falha crítica. Todas as conexões falharam por bloqueio."
     )
-    print(msg_fatal)
-    send_telegram_alert(msg_fatal, bot_token, chat_id)
     return "BOT_BLOCK"
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Multimodal YouTube Extractor")
@@ -398,7 +374,7 @@ if __name__ == "__main__":
         default=".",
     )
 
-    # seleção modular do que vai ser baixado
+    # flags de seleção modular
     parser.add_argument(
         "--audio", action="store_true", help="Download audio (.mp3)"
     )
@@ -422,7 +398,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # se nenhuma flag passada baixa tudo
+    # se nenhuma flag específica for informada, ativa todas por padrão
     if not (args.audio or args.subtitles or args.frames or args.thumbnail):
         dl_audio = True
         dl_subtitles = True
