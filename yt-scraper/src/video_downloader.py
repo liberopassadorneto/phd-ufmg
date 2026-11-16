@@ -276,14 +276,20 @@ def process_video(
         except Exception as e:
             error_str = str(e).lower()
 
-            if (
-                "sign in to confirm" in error_str
-                or "bot" in error_str
-                or "cookies" in error_str
-            ):
+            block_indicators = (
+                "sign in to confirm",
+                "bot",
+                "cookies",
+                "429",
+                "too many requests",
+                "rate-limited",
+                "try again later",
+            )
+
+            if any(indicator in error_str for indicator in block_indicators):
                 print(
-                    f"[{video_id}] Bloqueio detectado na rede '{network_name}'."
-                    " Iniciando rotação de IP."
+                    f"[{video_id}] Bloqueio/Rate-limit detectado na rede '{network_name}'."
+                    " Iniciando rotacao de IP."
                 )
                 current_proxy_index = (current_proxy_index + 1) % len(
                     available_networks
@@ -303,7 +309,6 @@ def process_video(
             else:
                 print(f"[{video_id}] Erro no processamento: {error_str}")
                 return "ERROR"
-
     print(
         f"[{video_id}] Falha critica: todas as conexoes falharam por bloqueio."
     )

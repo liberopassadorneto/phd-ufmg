@@ -261,6 +261,8 @@ def worker_process(
         abs_output_dir = os.path.abspath(output_dir)
 
         for idx, row in enumerate(rows, start=1):
+            import random
+            time.sleep(random.uniform(2, 6)) # pequena pausa para não dar merda
             video_id = row.get("Video_id") or row.get("video_id")
             if not video_id:
                 continue
