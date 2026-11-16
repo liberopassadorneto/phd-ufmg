@@ -46,7 +46,6 @@ def check_subtitles_availability(video_id, proxy=None, cookiefile=None):
 
     return available
 
-
 def setup_video_directories(video_id, output_dir, create_frames_dir=False):
     """Cria a estrutura de pastas isolada para um vídeo específico."""
     base_dir = f"{output_dir}/{video_id}"
@@ -54,7 +53,6 @@ def setup_video_directories(video_id, output_dir, create_frames_dir=False):
     if create_frames_dir:
         os.makedirs(f"{base_dir}/frames", exist_ok=True)
     return base_dir
-
 
 def prepare_cookies_file(cookies_dir="."):
     """Localiza cookies_base.txt ou cookies.txt na pasta informada e cria cookies_temp.txt."""
@@ -71,48 +69,6 @@ def prepare_cookies_file(cookies_dir="."):
         open(temp_cookie, "w").close()
 
     return temp_cookie
-
-
-def is_already_processed(
-    video_id,
-    output_dir,
-    download_audio=True,
-    download_subtitles=True,
-    download_frames=True,
-    download_thumbnail=True,
-):
-    """Verifica se todos os artefatos solicitados já existem localmente."""
-    base_dir = f"{output_dir}/{video_id}"
-    if not os.path.exists(base_dir):
-        return False
-
-    if download_frames:
-        frames_dir = f"{base_dir}/frames"
-        if not (os.path.exists(frames_dir) and len(os.listdir(frames_dir)) > 0):
-            return False
-
-    if download_audio:
-        if not os.path.exists(f"{base_dir}/{video_id}.mp3"):
-            return False
-
-    if download_subtitles:
-        subs = glob.glob(f"{base_dir}/*{video_id}*.srt") + glob.glob(
-            f"{base_dir}/*{video_id}*.vtt"
-        )
-        if not subs:
-            return False
-
-    if download_thumbnail:
-        thumbs = (
-            glob.glob(f"{base_dir}/{video_id}.jpg")
-            + glob.glob(f"{base_dir}/{video_id}.webp")
-            + glob.glob(f"{base_dir}/{video_id}.png")
-        )
-        if not thumbs:
-            return False
-
-    return True
-
 
 def _organize_subtitle_files(base_dir, video_id, subs_status):
     """Renomeia os arquivos de legenda baixados para o padrão manual_/automatic_."""
@@ -136,7 +92,6 @@ def _organize_subtitle_files(base_dir, video_id, subs_status):
         if os.path.exists(new_name):
             os.remove(new_name)
         os.rename(filepath, new_name)
-
 
 def download_media(
     video_id,
@@ -167,7 +122,7 @@ def download_media(
     if target_proxy:
         base_ydl_opts["proxy"] = target_proxy
 
-    # download das legendas
+    # legendas
     if download_subtitles:
         subs_status = check_subtitles_availability(
             video_id, target_proxy, cookiefile=temp_cookie_path
@@ -185,7 +140,7 @@ def download_media(
                 ydl.download([url])
             _organize_subtitle_files(base_dir, video_id, subs_status)
 
-    # download da thumbnail
+    # thumbnail
     if download_thumbnail:
         thumb_options = base_ydl_opts.copy()
         thumb_options.update({
@@ -195,7 +150,7 @@ def download_media(
         with yt_dlp.YoutubeDL(thumb_options) as ydl:
             ydl.download([url])
 
-    # download do áudio
+    # audio
     if download_audio:
         audio_options = base_ydl_opts.copy()
         audio_options.update({
@@ -209,7 +164,7 @@ def download_media(
         with yt_dlp.YoutubeDL(audio_options) as ydl:
             ydl.download([url])
 
-    # download do vídeo base -> frames
+    # vídeo base -> frames
     if download_frames:
         video_options = base_ydl_opts.copy()
         video_options.update({
@@ -217,7 +172,6 @@ def download_media(
         })
         with yt_dlp.YoutubeDL(video_options) as ydl:
             ydl.download([url])
-
 
 def extract_frames(video_id, output_dir="output", target_fps="1/10"):
     """Encontra dinamicamente o arquivo de vídeo baixado e extrai os frames."""
@@ -256,7 +210,6 @@ def extract_frames(video_id, output_dir="output", target_fps="1/10"):
     except subprocess.CalledProcessError:
         pass
 
-
 def process_video(
     video_id,
     download_audio=True,
@@ -268,19 +221,8 @@ def process_video(
     use_proxies=False,
     proxy_list=None,
 ):
-    """Função orquestradora que retorna o status do download ('SUCCESS', 'BOT_BLOCK' ou 'ERROR')."""
+    """Função orquestradora que retorna 'SUCCESS', 'BOT_BLOCK' ou 'ERROR'."""
     global current_proxy_index
-
-    if is_already_processed(
-        video_id,
-        output_dir,
-        download_audio,
-        download_subtitles,
-        download_frames,
-        download_thumbnail,
-    ):
-        print(f"\n--- [SKIPPING] Video already processed: {video_id} ---")
-        return "SUCCESS"
 
     selected_tasks = [
         name
@@ -359,7 +301,6 @@ def process_video(
         f"[{video_id}] falha crítica. Todas as conexões falharam por bloqueio."
     )
     return "BOT_BLOCK"
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Multimodal YouTube Extractor")
