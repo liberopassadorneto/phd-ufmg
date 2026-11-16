@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import glob
 import math
 import os
+import random
 import shutil
 import subprocess
 import sys
@@ -160,7 +161,7 @@ def persist_and_cleanup_video(
         return
 
     print(
-        f"[Perfil {profile_id}] [{video_id}] [S3] Upload concluido"
+        f">> [PERFIL {profile_id}] [{video_id}] [S3] Upload concluido"
         f" ({len(uploaded_assets)} arquivo(s)).",
         flush=True,
     )
@@ -211,7 +212,7 @@ def persist_and_cleanup_video(
         sync_manager.save_transcript_to_db(record)
 
     print(
-        f"[Perfil {profile_id}] [{video_id}] [POSTGRES] Metadados salvos"
+        f">> [PERFIL {profile_id}] [{video_id}] [POSTGRES] Metadados salvos"
         f" ({modality_str}).",
         flush=True,
     )
@@ -238,6 +239,18 @@ def worker_process(
     work_dir = os.path.abspath(f"worker_env_profile_{profile_id}")
     os.makedirs(work_dir, exist_ok=True)
 
+    # formata as tags ativas para o log (ex: [audio,subs])
+    short_tags = []
+    if download_opts.get("audio"):
+        short_tags.append("audio")
+    if download_opts.get("subtitles"):
+        short_tags.append("subs")
+    if download_opts.get("frames"):
+        short_tags.append("frames")
+    if download_opts.get("thumbnail"):
+        short_tags.append("thumb")
+    tags_label = f"[{','.join(short_tags)}]"
+
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         source_downloader = os.path.join(script_dir, "video_downloader.py")
@@ -261,11 +274,15 @@ def worker_process(
         abs_output_dir = os.path.abspath(output_dir)
 
         for idx, row in enumerate(rows, start=1):
-            import random
-            time.sleep(random.uniform(2, 6)) # pequena pausa para não dar merda
+            time.sleep(random.uniform(2, 6))  # pequena pausa para não dar merda
             video_id = row.get("Video_id") or row.get("video_id")
             if not video_id:
                 continue
+
+            print(
+                f"[PERFIL {profile_id}] iniciando processamento {video_id} {tags_label}",
+                flush=True,
+            )
 
             cmd = build_downloader_cli_args(
                 downloader_script=downloader_copy,
@@ -298,11 +315,14 @@ def worker_process(
                         "erro no processamento",
                     )
                 ):
-                    print(f"[Perfil {profile_id}] {clean_line}", flush=True)
+                    print(
+                        f">> [PERFIL {profile_id}] [{video_id}] {clean_line}",
+                        flush=True,
+                    )
 
             if proc.returncode == 0:
                 print(
-                    f"[Perfil {profile_id}] [{video_id}] ({idx}/{len(rows)})"
+                    f">> [PERFIL {profile_id}] [{video_id}] ({idx}/{len(rows)})"
                     " [DOWNLOAD] Concluido.",
                     flush=True,
                 )
@@ -319,7 +339,7 @@ def worker_process(
                         pending_videos.remove(row)
                 except Exception as sync_err:
                     print(
-                        f"[Perfil {profile_id}] [{video_id}] [ERRO][SYNC] Falha"
+                        f">> [PERFIL {profile_id}] [{video_id}] [ERRO][SYNC] Falha"
                         f" ao salvar no S3/DB: {sync_err}",
                         flush=True,
                     )
