@@ -22,7 +22,7 @@ def fix_s3_keys(conf_path="config.conf", dry_run=True):
         with conn.cursor() as cur:
             # Verifica quantos registros têm caminho completo (ex: data/<id>/arquivo.ext ou data/<id>/frames/)
             cur.execute("""
-                SELECT youtube_video_id, s3_key
+                SELECT video_id, s3_key
                 FROM phd_pipeline.transcript
                 WHERE s3_key LIKE 'data/%/%';
             """)
