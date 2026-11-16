@@ -243,7 +243,7 @@ def process_video(
     use_proxies=False,
     proxy_list=None,
 ):
-    """Função orquestradora que retorna 'SUCCESS', 'BOT_BLOCK' ou 'ERROR'."""
+    """Função orquestradora que retorna 'SUCCESS', 'UNAVAILABLE', 'BOT_BLOCK' ou 'ERROR'."""
     global current_proxy_index
 
     if use_proxies and proxy_list:
@@ -275,6 +275,26 @@ def process_video(
 
         except Exception as e:
             error_str = str(e).lower()
+
+            unavailable_indicators = (
+                "video unavailable",
+                "this video is unavailable",
+                "private video",
+                "this video is private",
+                "video has been removed",
+                "account associated with this video has been terminated",
+                "join this channel to get access",
+                "members-only content",
+            )
+
+            if any(
+                indicator in error_str for indicator in unavailable_indicators
+            ):
+                shutil.rmtree(f"{output_dir}/{video_id}", ignore_errors=True)
+                print(
+                    f"[{video_id}] Video indisponivel ou privado. Pulando..."
+                )
+                return "UNAVAILABLE"
 
             block_indicators = (
                 "sign in to confirm",
@@ -309,6 +329,7 @@ def process_video(
             else:
                 print(f"[{video_id}] Erro no processamento: {error_str}")
                 return "ERROR"
+
     print(
         f"[{video_id}] Falha critica: todas as conexoes falharam por bloqueio."
     )
@@ -395,5 +416,7 @@ if __name__ == "__main__":
         proxy_list=proxy_list,
     )
 
-    if status != "SUCCESS":
+    if status == "UNAVAILABLE":
+        sys.exit(2)
+    elif status != "SUCCESS":
         sys.exit(1)

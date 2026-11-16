@@ -343,6 +343,14 @@ def worker_process(
                         f" ao salvar no S3/DB: {sync_err}",
                         flush=True,
                     )
+            elif proc.returncode == 2 or "video indisponivel" in combined_output.lower():
+                print(
+                    f">> [PERFIL {profile_id}] [{video_id}] [PULADO] Video indisponivel ou privado.",
+                    flush=True,
+                )
+                if row in pending_videos:
+                    pending_videos.remove(row)
+                continue
             else:
                 if (
                     "bloqueio detectado" in combined_output.lower()
