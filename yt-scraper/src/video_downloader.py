@@ -181,7 +181,7 @@ def download_media(
     if target_proxy:
         base_ydl_opts["proxy"] = target_proxy
 
-    # 1. Download das legendas
+    # download das legendas
     if download_subtitles:
         subs_status = check_subtitles_availability(
             video_id, target_proxy, cookiefile=temp_cookie_path
@@ -199,7 +199,7 @@ def download_media(
                 ydl.download([url])
             _organize_subtitle_files(base_dir, video_id, subs_status)
 
-    # 2. Download da thumbnail (independente do áudio)
+    # download da thumbnail (independente do áudio)
     if download_thumbnail:
         thumb_options = base_ydl_opts.copy()
         thumb_options.update({
@@ -209,7 +209,7 @@ def download_media(
         with yt_dlp.YoutubeDL(thumb_options) as ydl:
             ydl.download([url])
 
-    # 3. Download do áudio
+    # download do áudio
     if download_audio:
         audio_options = base_ydl_opts.copy()
         audio_options.update({
@@ -223,7 +223,7 @@ def download_media(
         with yt_dlp.YoutubeDL(audio_options) as ydl:
             ydl.download([url])
 
-    # 4. Download do vídeo base -> frames
+    # download do vídeo base -> frames
     if download_frames:
         video_options = base_ydl_opts.copy()
         video_options.update({
