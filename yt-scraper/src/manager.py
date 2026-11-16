@@ -168,6 +168,7 @@ def persist_and_cleanup_video(
 
     modality_str = resolve_downloaded_modality_label(download_opts)
     total_size_bytes = sum(a["size_bytes"] for a in uploaded_assets)
+    s3_prefix_key = f"data/{video_id}"
 
     subtitle_assets = [
         a
@@ -189,31 +190,26 @@ def persist_and_cleanup_video(
                 language_code="pt",
                 file_format=modality_str,
                 s3_bucket=asset["s3_bucket"],
-                s3_key=asset["s3_key"],
+                s3_key=s3_prefix_key,
                 size_bytes=asset["size_bytes"],
             )
             sync_manager.save_transcript_to_db(record)
     else:
         primary_asset = uploaded_assets[0]
-        s3_key_ref = (
-            f"data/{video_id}/frames/"
-            if download_opts.get("frames") and not download_opts.get("audio")
-            else primary_asset["s3_key"]
-        )
         record = TranscriptRecord(
             youtube_video_id=str(video_id),
             source_type="YOUTUBE_AUTOMATIC",
             language_code="pt",
             file_format=modality_str,
             s3_bucket=primary_asset["s3_bucket"],
-            s3_key=s3_key_ref,
+            s3_key=s3_prefix_key,
             size_bytes=total_size_bytes,
         )
         sync_manager.save_transcript_to_db(record)
 
     print(
         f">> [PERFIL {profile_id}] [{video_id}] [POSTGRES] Metadados salvos"
-        f" ({modality_str}).",
+        f" ({modality_str} | {s3_prefix_key}).",
         flush=True,
     )
 
@@ -309,7 +305,7 @@ def worker_process(
                 if any(
                     tag in clean_line.lower()
                     for tag in (
-                        "bloqueio detectado",
+                        "bloqueio/rate-limit detectado",
                         "roteando trafego",
                         "falha critica",
                         "erro no processamento",
@@ -343,7 +339,7 @@ def worker_process(
                         f" ao salvar no S3/DB: {sync_err}",
                         flush=True,
                     )
-            elif proc.returncode == 2 or "video indisponivel" in combined_output.lower():
+            elif proc.returncode == 2:
                 print(
                     f">> [PERFIL {profile_id}] [{video_id}] [PULADO] Video indisponivel ou privado.",
                     flush=True,
@@ -353,7 +349,7 @@ def worker_process(
                 continue
             else:
                 if (
-                    "bloqueio detectado" in combined_output.lower()
+                    "bloqueio/rate-limit detectado" in combined_output.lower()
                     or "falha critica" in combined_output.lower()
                 ):
                     block_detected = True

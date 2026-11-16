@@ -276,6 +276,37 @@ def process_video(
         except Exception as e:
             error_str = str(e).lower()
 
+            block_indicators = (
+                "sign in to confirm you're not a bot",
+                "sign in to confirm you’re not a bot",
+                "429",
+                "too many requests",
+                "rate-limited",
+                "try again later",
+            )
+
+            if any(indicator in error_str for indicator in block_indicators):
+                print(
+                    f"[{video_id}] Bloqueio/Rate-limit detectado na rede '{network_name}'."
+                )
+                current_proxy_index = (current_proxy_index + 1) % len(
+                    available_networks
+                )
+                remaining_attempts -= 1
+
+                if remaining_attempts > 0:
+                    next_target = available_networks[
+                        current_proxy_index % len(available_networks)
+                    ]
+                    next_name = (
+                        "Conexao Direta" if next_target is None else next_target
+                    )
+                    print(
+                        f"[{video_id}] Roteando trafego para a nova origem:"
+                        f" '{next_name}'."
+                    )
+                continue
+
             unavailable_indicators = (
                 "video unavailable",
                 "this video is unavailable",
@@ -296,39 +327,8 @@ def process_video(
                 )
                 return "UNAVAILABLE"
 
-            block_indicators = (
-                "sign in to confirm",
-                "bot",
-                "cookies",
-                "429",
-                "too many requests",
-                "rate-limited",
-                "try again later",
-            )
-
-            if any(indicator in error_str for indicator in block_indicators):
-                print(
-                    f"[{video_id}] Bloqueio/Rate-limit detectado na rede '{network_name}'."
-                    " Iniciando rotacao de IP."
-                )
-                current_proxy_index = (current_proxy_index + 1) % len(
-                    available_networks
-                )
-                remaining_attempts -= 1
-
-                next_target = available_networks[
-                    current_proxy_index % len(available_networks)
-                ]
-                next_name = (
-                    "Conexao Direta" if next_target is None else next_target
-                )
-                print(
-                    f"[{video_id}] Roteando trafego para a nova origem:"
-                    f" '{next_name}'."
-                )
-            else:
-                print(f"[{video_id}] Erro no processamento: {error_str}")
-                return "ERROR"
+            print(f"[{video_id}] Erro no processamento: {error_str}")
+            return "ERROR"
 
     print(
         f"[{video_id}] Falha critica: todas as conexoes falharam por bloqueio."
