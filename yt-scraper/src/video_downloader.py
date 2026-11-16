@@ -1,14 +1,14 @@
-import os
-import sys
-import csv
 import argparse
-import yt_dlp
-import subprocess
 import glob
+import os
 import shutil
+import subprocess
+import sys
 import requests
+import yt_dlp
 
 current_proxy_index = 0
+
 
 def send_telegram_alert(text, bot_token, chat_id):
     """Notifica o Telegram sobre eventos de rede com baixa verbosidade visual."""
@@ -18,28 +18,37 @@ def send_telegram_alert(text, bot_token, chat_id):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=5)
-    except:
+    except Exception:
         pass
 
-def check_subtitles_availability(video_id, proxy=None):
+
+def check_subtitles_availability(video_id, proxy=None, cookiefile=None):
     """
-    Verifica quais tipos de legenda em português (manual e/ou automática) 
+    Verifica quais tipos de legenda em português (manual e/ou automática)
     estão disponíveis para o vídeo. Retorna um dicionário com booleans.
     """
     url = f"https://www.youtube.com/watch?v={video_id}"
     available = {"manual": False, "automatic": False}
-    
+
     command = ["yt-dlp", "--list-subs"]
+    if cookiefile and os.path.exists(cookiefile):
+        command.extend(["--cookies", cookiefile])
     if proxy:
         command.extend(["--proxy", proxy])
     command.append(url)
-    
+
     try:
-        result = subprocess.check_output(command, stderr=subprocess.STDOUT, universal_newlines=True)
+        result = subprocess.check_output(
+            command, stderr=subprocess.STDOUT, universal_newlines=True
+        )
         output = result.lower()
         if "available subtitles" in output:
             parts = output.split("available subtitles")
-            manual_section = parts[1].split("available automatic captions")[0] if "available automatic captions" in parts[1] else parts[1]
+            manual_section = (
+                parts[1].split("available automatic captions")[0]
+                if "available automatic captions" in parts[1]
+                else parts[1]
+            )
             if "pt" in manual_section or "portuguese" in manual_section:
                 available["manual"] = True
         if "available automatic captions" in output:
@@ -48,78 +57,181 @@ def check_subtitles_availability(video_id, proxy=None):
                 available["automatic"] = True
     except subprocess.CalledProcessError:
         pass
-    
+
     return available
 
-def setup_video_directories(video_id, output_dir):
+
+def setup_video_directories(video_id, output_dir, create_frames_dir=False):
     """Cria a estrutura de pastas isolada para um vídeo específico."""
     base_dir = f"{output_dir}/{video_id}"
-    os.makedirs(f"{base_dir}/frames", exist_ok=True)
+    os.makedirs(base_dir, exist_ok=True)
+    if create_frames_dir:
+        os.makedirs(f"{base_dir}/frames", exist_ok=True)
     return base_dir
 
-def download_media(video_id, target_proxy, extract_subs=False, output_dir="output"):
-    """Baixa o áudio, vídeo base e gerencia o download de ambas as legendas."""
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    base_dir = setup_video_directories(video_id, output_dir)
-    
-    if os.path.exists('cookies_base.txt'):
-        shutil.copy('cookies_base.txt', 'cookies_temp.txt')
-    elif os.path.exists('cookies.txt'):
-        shutil.copy('cookies.txt', 'cookies_temp.txt')
+
+def prepare_cookies_file(cookies_dir="."):
+    """Localiza cookies_base.txt ou cookies.txt na pasta informada e cria cookies_temp.txt."""
+    os.makedirs(cookies_dir, exist_ok=True)
+    base_cookie = os.path.join(cookies_dir, "cookies_base.txt")
+    standard_cookie = os.path.join(cookies_dir, "cookies.txt")
+    temp_cookie = os.path.join(cookies_dir, "cookies_temp.txt")
+
+    if os.path.exists(base_cookie):
+        shutil.copy(base_cookie, temp_cookie)
+    elif os.path.exists(standard_cookie):
+        shutil.copy(standard_cookie, temp_cookie)
     else:
-        open('cookies_temp.txt', 'w').close()
-    
-    subs_status = {"manual": False, "automatic": False}
-    if extract_subs:
-        subs_status = check_subtitles_availability(video_id, target_proxy)
+        open(temp_cookie, "w").close()
 
-    audio_options = {
-        'format': 'ba/bestaudio/b', 
-        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-        'outtmpl': f'{base_dir}/%(id)s.%(ext)s',
-        'quiet': True,
-        'no_warnings': True,
-        'cookiefile': 'cookies_temp.txt',
-        'extractor_args': {'youtube': ['player_client=android']}, 
-        'writethumbnail': True,
-        'remote_components': 'ejs:github'
-    }
+    return temp_cookie
 
-    video_options = {
-        'format': 'bv/bestvideo/b',
-        'outtmpl': f'{base_dir}/%(id)s.%(ext)s',
-        'quiet': True,
-        'no_warnings': True,
-        'cookiefile': 'cookies_temp.txt', 
-        'extractor_args': {'youtube': ['player_client=android']},
-        'remote_components': 'ejs:github'
+
+def is_already_processed(
+    video_id,
+    output_dir,
+    download_audio=True,
+    download_subtitles=True,
+    download_frames=True,
+    download_thumbnail=True,
+):
+    """Verifica se todos os artefatos solicitados já existem localmente."""
+    base_dir = f"{output_dir}/{video_id}"
+    if not os.path.exists(base_dir):
+        return False
+
+    if download_frames:
+        frames_dir = f"{base_dir}/frames"
+        if not (os.path.exists(frames_dir) and len(os.listdir(frames_dir)) > 0):
+            return False
+
+    if download_audio:
+        if not os.path.exists(f"{base_dir}/{video_id}.mp3"):
+            return False
+
+    if download_subtitles:
+        subs = glob.glob(f"{base_dir}/*{video_id}*.srt") + glob.glob(
+            f"{base_dir}/*{video_id}*.vtt"
+        )
+        if not subs:
+            return False
+
+    if download_thumbnail:
+        thumbs = (
+            glob.glob(f"{base_dir}/{video_id}.jpg")
+            + glob.glob(f"{base_dir}/{video_id}.webp")
+            + glob.glob(f"{base_dir}/{video_id}.png")
+        )
+        if not thumbs:
+            return False
+
+    return True
+
+
+def _organize_subtitle_files(base_dir, video_id, subs_status):
+    """Renomeia os arquivos de legenda baixados para o padrão manual_/automatic_."""
+    srt_files = glob.glob(f"{base_dir}/{video_id}*.srt") + glob.glob(
+        f"{base_dir}/{video_id}*.vtt"
+    )
+    for filepath in srt_files:
+        if "manual_" in filepath or "automatic_" in filepath:
+            continue
+        base_filename = os.path.basename(filepath)
+        is_auto = "auto" in base_filename.lower() or (
+            subs_status["automatic"] and not subs_status["manual"]
+        )
+        new_name = (
+            f"{base_dir}/automatic_{video_id}.srt"
+            if is_auto
+            else f"{base_dir}/manual_{video_id}.srt"
+        )
+        if filepath.endswith(".vtt"):
+            new_name = new_name.replace(".srt", ".vtt")
+        if os.path.exists(new_name):
+            os.remove(new_name)
+        os.rename(filepath, new_name)
+
+
+def download_media(
+    video_id,
+    target_proxy,
+    download_audio=True,
+    download_subtitles=True,
+    download_frames=True,
+    download_thumbnail=True,
+    output_dir="output",
+    cookies_dir=".",
+):
+    """Baixa seletivamente áudio, legendas, thumbnail e/ou vídeo base conforme parâmetros."""
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    base_dir = setup_video_directories(
+        video_id, output_dir, create_frames_dir=download_frames
+    )
+    temp_cookie_path = prepare_cookies_file(cookies_dir)
+
+    base_ydl_opts = {
+        "outtmpl": f"{base_dir}/%(id)s.%(ext)s",
+        "quiet": True,
+        "no_warnings": True,
+        "cookiefile": temp_cookie_path,
+        "extractor_args": {"youtube": ["player_client=android"]},
+        "remote_components": "ejs:github",
     }
 
     if target_proxy:
-        audio_options['proxy'] = target_proxy
-        video_options['proxy'] = target_proxy
+        base_ydl_opts["proxy"] = target_proxy
 
-    if extract_subs and any(subs_status.values()):
-        audio_options.update({
-            'writesubtitles': subs_status["manual"],
-            'writeautomaticsub': subs_status["automatic"],
-            'subtitleslangs': ['pt'],
-            'subtitlesformat': 'srt',
+    # 1. Download das legendas
+    if download_subtitles:
+        subs_status = check_subtitles_availability(
+            video_id, target_proxy, cookiefile=temp_cookie_path
+        )
+        if any(subs_status.values()):
+            sub_options = base_ydl_opts.copy()
+            sub_options.update({
+                "skip_download": True,
+                "writesubtitles": subs_status["manual"],
+                "writeautomaticsub": subs_status["automatic"],
+                "subtitleslangs": ["pt"],
+                "subtitlesformat": "srt",
+            })
+            with yt_dlp.YoutubeDL(sub_options) as ydl:
+                ydl.download([url])
+            _organize_subtitle_files(base_dir, video_id, subs_status)
+
+    # 2. Download da thumbnail (independente do áudio)
+    if download_thumbnail:
+        thumb_options = base_ydl_opts.copy()
+        thumb_options.update({
+            "skip_download": True,
+            "writethumbnail": True,
         })
+        with yt_dlp.YoutubeDL(thumb_options) as ydl:
+            ydl.download([url])
 
-    with yt_dlp.YoutubeDL(audio_options) as ydl:
-        ydl.download([url])
-        srt_files = glob.glob(f"{base_dir}/{video_id}*.srt") + glob.glob(f"{base_dir}/{video_id}*.vtt")
-        for filepath in srt_files:
-            if "manual_" in filepath or "automatic_" in filepath: continue
-            base_filename = os.path.basename(filepath)
-            new_name = f"{base_dir}/automatic_{video_id}.srt" if "auto" in base_filename.lower() or (subs_status["automatic"] and not subs_status["manual"]) else f"{base_dir}/manual_{video_id}.srt"
-            if filepath.endswith('.vtt'): new_name = new_name.replace('.srt', '.vtt')
-            if os.path.exists(new_name): os.remove(new_name)
-            os.rename(filepath, new_name)
+    # 3. Download do áudio
+    if download_audio:
+        audio_options = base_ydl_opts.copy()
+        audio_options.update({
+            "format": "ba/bestaudio/b",
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }],
+        })
+        with yt_dlp.YoutubeDL(audio_options) as ydl:
+            ydl.download([url])
 
-    with yt_dlp.YoutubeDL(video_options) as ydl:
-        ydl.download([url])
+    # 4. Download do vídeo base -> frames
+    if download_frames:
+        video_options = base_ydl_opts.copy()
+        video_options.update({
+            "format": "bv/bestvideo/b",
+        })
+        with yt_dlp.YoutubeDL(video_options) as ydl:
+            ydl.download([url])
+
 
 def extract_frames(video_id, output_dir="output", target_fps="1/10"):
     """Encontra dinamicamente o arquivo de vídeo baixado e extrai os frames."""
@@ -129,132 +241,208 @@ def extract_frames(video_id, output_dir="output", target_fps="1/10"):
     os.makedirs(frames_dir, exist_ok=True)
     files_in_folder = glob.glob(f"{base_dir}/{video_id}.*")
     video_path = None
-    
+
     for filepath in files_in_folder:
-        if not filepath.endswith(('.mp3', '.srt', '.vtt', '.jpg', '.m4a', '.webp')):
+        if not filepath.endswith(
+            (".mp3", ".srt", ".vtt", ".jpg", ".m4a", ".webp", ".png")
+        ):
             video_path = filepath
             break
 
-    if not video_path: return
-    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", video_path, "-vf", f"fps={target_fps}", "-q:v", "2", output_pattern]
+    if not video_path:
+        return
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        video_path,
+        "-vf",
+        f"fps={target_fps}",
+        "-q:v",
+        "2",
+        output_pattern,
+    ]
     try:
         subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
         os.remove(video_path)
     except subprocess.CalledProcessError:
         pass
 
-def process_video(video_id, extract_subs, output_dir, bot_token=None, chat_id=None, use_proxies=False, proxy_list=None):
+
+def process_video(
+    video_id,
+    download_audio=True,
+    download_subtitles=True,
+    download_frames=True,
+    download_thumbnail=True,
+    output_dir="output",
+    cookies_dir=".",
+    bot_token=None,
+    chat_id=None,
+    use_proxies=False,
+    proxy_list=None,
+):
     """Função orquestradora que retorna o status do download."""
     global current_proxy_index
-    frames_dir = f"{output_dir}/{video_id}/frames"
-    
-    if os.path.exists(frames_dir) and len(os.listdir(frames_dir)) > 0:
-        print(f"\n--- [SKIPPING] Video already processed: {video_id} ---")
-        return "SUCCESS" 
 
-    print(f"\n--- Starting processing: {video_id} ---")
-    
+    if is_already_processed(
+        video_id,
+        output_dir,
+        download_audio,
+        download_subtitles,
+        download_frames,
+        download_thumbnail,
+    ):
+        print(f"\n--- [SKIPPING] Video already processed: {video_id} ---")
+        return "SUCCESS"
+
+    selected_tasks = [
+        name
+        for name, enabled in [
+            ("audio", download_audio),
+            ("subtitles", download_subtitles),
+            ("frames", download_frames),
+            ("thumbnail", download_thumbnail),
+        ]
+        if enabled
+    ]
+    print(
+        f"\n--- Starting processing: {video_id} [{', '.join(selected_tasks)}]"
+        " ---"
+    )
+
     if use_proxies and proxy_list:
-        available_networks = [None] + proxy_list
+        available_networks = proxy_list  # ao receber uma lista de proxies usa exclusivamente eles
     else:
         available_networks = [None]
 
     remaining_attempts = len(available_networks)
-    
+
     while remaining_attempts > 0:
         safe_index = current_proxy_index % len(available_networks)
         target_proxy = available_networks[safe_index]
         network_name = "Server Direct" if target_proxy is None else target_proxy
-        
+
         try:
-            download_media(video_id, target_proxy, extract_subs, output_dir)
-            extract_frames(video_id, output_dir)
+            download_media(
+                video_id=video_id,
+                target_proxy=target_proxy,
+                download_audio=download_audio,
+                download_subtitles=download_subtitles,
+                download_frames=download_frames,
+                download_thumbnail=download_thumbnail,
+                output_dir=output_dir,
+                cookies_dir=cookies_dir,
+            )
+            if download_frames:
+                extract_frames(video_id, output_dir)
             return "SUCCESS"
-            
+
         except Exception as e:
             error_str = str(e).lower()
-            
-            if "sign in to confirm" in error_str or "bot" in error_str or "cookies" in error_str:
+
+            if (
+                "sign in to confirm" in error_str
+                or "bot" in error_str
+                or "cookies" in error_str
+            ):
                 msg_alert = (
                     f"⚠️ Bloqueio detectado no vídeo `{video_id}`\n"
                     f"- Rede bloqueada: `{network_name}`\n"
-                    f"- Etapa: Início de rotação de IP."
+                    "- Etapa: Início de rotação de IP."
                 )
                 print(f"[{video_id}] {msg_alert}")
                 send_telegram_alert(msg_alert, bot_token, chat_id)
-                
-                current_proxy_index = (current_proxy_index + 1) % len(available_networks)
+
+                current_proxy_index = (current_proxy_index + 1) % len(
+                    available_networks
+                )
                 remaining_attempts -= 1
-                
-                next_target = available_networks[current_proxy_index % len(available_networks)]
-                next_name = "Conexão Direta" if next_target is None else next_target
-                msg_transition = f"🔄 Roteando tráfego de extração para a nova origem: `{next_name}`."
+
+                next_target = available_networks[
+                    current_proxy_index % len(available_networks)
+                ]
+                next_name = (
+                    "conexão direta" if next_target is None else next_target
+                )
+                msg_transition = (
+                    ">> roteando tráfego de extração para a nova origem:"
+                    f" `{next_name}`."
+                )
                 print(f"[{video_id}] {msg_transition}")
                 send_telegram_alert(msg_transition, bot_token, chat_id)
             else:
                 print(f"[{video_id}] Failed to process: {error_str}")
                 return "ERROR"
-                
-    msg_fatal = f"🚫 Falha crítica. Todos os túneis SSH e conexões locais falharam no vídeo `{video_id}`."
+
+    msg_fatal = (
+        "🚫 Falha crítica. Todos os túneis SSH e conexões locais falharam no"
+        f" vídeo `{video_id}`."
+    )
     print(msg_fatal)
     send_telegram_alert(msg_fatal, bot_token, chat_id)
     return "BOT_BLOCK"
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Multimodal YouTube Extractor")
-    parser.add_argument("--id", type=str, help="Unique Video ID")
-    parser.add_argument("--csv", type=str, help="Path to CSV file")
-    parser.add_argument("--limit", type=int, help="Maximum number of videos to process", default=None)
-    parser.add_argument("--subs", action="store_true", help="Also download .srt subtitles")
-    parser.add_argument("--output", type=str, help="Main output folder", default="output")
-    
+    parser.add_argument("--id", type=str, required=True, help="Unique Video ID")
+    parser.add_argument(
+        "--output", type=str, help="Main output folder", default="output"
+    )
+    parser.add_argument(
+        "--cookies-dir",
+        type=str,
+        help="Directory containing cookies_base.txt or cookies.txt",
+        default=".",
+    )
+
+    # seleção modular do que vai ser baixado
+    parser.add_argument(
+        "--audio", action="store_true", help="Download audio (.mp3)"
+    )
+    parser.add_argument(
+        "--subtitles",
+        "--subs",
+        dest="subtitles",
+        action="store_true",
+        help="Download .srt/.vtt subtitles",
+    )
+    parser.add_argument(
+        "--frames", action="store_true", help="Download video and extract frames"
+    )
+    parser.add_argument(
+        "--thumbnail",
+        "--thumb",
+        dest="thumbnail",
+        action="store_true",
+        help="Download video thumbnail",
+    )
+
     args = parser.parse_args()
- 
-    if args.id:
-        process_video(args.id, args.subs, args.output)
-        
-    elif args.csv:
-        if not os.path.exists(args.csv):
-            print(f"Error: The file {args.csv} was not found.")
-            sys.exit(1)
-            
-        print(f"Reading database: {args.csv}")
-        with open(args.csv, mode='r', encoding='utf-8') as csv_file:
-            reader = csv.DictReader(csv_file, delimiter=',') 
-            headers = reader.fieldnames
-            rows = list(reader)
 
-        pending_videos = rows.copy()
-        processed_videos = 0
-        block_detected = False
-
-        for row in rows:
-            if args.limit and processed_videos >= args.limit:
-                break
-                
-            video_id = row.get('Video_id') or row.get('video_id')
-            if video_id:
-                status = process_video(video_id, args.subs, args.output)
-                
-                if status == "BOT_BLOCK":
-                    print(f"\n[ALERT] YouTube block detected on video {video_id}.")
-                    block_detected = True
-                    break 
-                elif status == "SUCCESS":
-                    processed_videos += 1
-                    pending_videos.remove(row) 
-                    
-        print(f"\nUpdating file {args.csv}...")
-        with open(args.csv, mode='w', encoding='utf-8', newline='') as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=headers)
-            writer.writeheader()
-            writer.writerows(pending_videos)
-            
-        print(f"CSV saved. {len(pending_videos)} videos remaining for next runs.")
-        
-        if block_detected:
-            print("Program terminated preventively due to network block.")
-            sys.exit(1)
-                    
+    # se nenhuma flag passada baixa tudo
+    if not (args.audio or args.subtitles or args.frames or args.thumbnail):
+        dl_audio = True
+        dl_subtitles = True
+        dl_frames = True
+        dl_thumbnail = True
     else:
-        parser.print_help()
+        dl_audio = args.audio
+        dl_subtitles = args.subtitles
+        dl_frames = args.frames
+        dl_thumbnail = args.thumbnail
+
+    status = process_video(
+        video_id=args.id,
+        download_audio=dl_audio,
+        download_subtitles=dl_subtitles,
+        download_frames=dl_frames,
+        download_thumbnail=dl_thumbnail,
+        output_dir=args.output,
+        cookies_dir=args.cookies_dir,
+    )
+
+    if status != "SUCCESS":
+        sys.exit(1)
