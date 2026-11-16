@@ -8,6 +8,7 @@ import yt_dlp
 
 current_proxy_index = 0
 
+
 def check_subtitles_availability(video_id, proxy=None, cookiefile=None):
     """
     Verifica quais tipos de legenda em português (manual e/ou automática)
@@ -46,6 +47,7 @@ def check_subtitles_availability(video_id, proxy=None, cookiefile=None):
 
     return available
 
+
 def setup_video_directories(video_id, output_dir, create_frames_dir=False):
     """Cria a estrutura de pastas isolada para um vídeo específico."""
     base_dir = f"{output_dir}/{video_id}"
@@ -53,6 +55,7 @@ def setup_video_directories(video_id, output_dir, create_frames_dir=False):
     if create_frames_dir:
         os.makedirs(f"{base_dir}/frames", exist_ok=True)
     return base_dir
+
 
 def prepare_cookies_file(cookies_dir="."):
     """Localiza cookies_base.txt ou cookies.txt na pasta informada e cria cookies_temp.txt."""
@@ -69,6 +72,7 @@ def prepare_cookies_file(cookies_dir="."):
         open(temp_cookie, "w").close()
 
     return temp_cookie
+
 
 def _organize_subtitle_files(base_dir, video_id, subs_status):
     """Renomeia os arquivos de legenda baixados para o padrão manual_/automatic_."""
@@ -92,6 +96,7 @@ def _organize_subtitle_files(base_dir, video_id, subs_status):
         if os.path.exists(new_name):
             os.remove(new_name)
         os.rename(filepath, new_name)
+
 
 def download_media(
     video_id,
@@ -173,6 +178,7 @@ def download_media(
         with yt_dlp.YoutubeDL(video_options) as ydl:
             ydl.download([url])
 
+
 def extract_frames(video_id, output_dir="output", target_fps="1/10"):
     """Encontra dinamicamente o arquivo de vídeo baixado e extrai os frames."""
     base_dir = f"{output_dir}/{video_id}"
@@ -209,6 +215,7 @@ def extract_frames(video_id, output_dir="output", target_fps="1/10"):
         os.remove(video_path)
     except subprocess.CalledProcessError:
         pass
+
 
 def process_video(
     video_id,
@@ -276,7 +283,7 @@ def process_video(
             ):
                 print(
                     f"[{video_id}] bloqueio detectado na rede `{network_name}`."
-                    ">> iniciando rotação de IP."
+                    " >> iniciando rotação de IP."
                 )
                 current_proxy_index = (current_proxy_index + 1) % len(
                     available_networks
@@ -301,6 +308,7 @@ def process_video(
         f"[{video_id}] falha crítica. Todas as conexões falharam por bloqueio."
     )
     return "BOT_BLOCK"
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Multimodal YouTube Extractor")
@@ -337,6 +345,19 @@ if __name__ == "__main__":
         help="Download video thumbnail",
     )
 
+    # flags de rede / proxy
+    parser.add_argument(
+        "--use-proxies",
+        action="store_true",
+        help="Enable proxy rotation using --proxies",
+    )
+    parser.add_argument(
+        "--proxies",
+        type=str,
+        default="",
+        help="Comma-separated list of proxy URLs (e.g., socks5://127.0.0.1:1080)",
+    )
+
     args = parser.parse_args()
 
     # se nenhuma flag específica for informada, ativa todas por padrão
@@ -351,6 +372,12 @@ if __name__ == "__main__":
         dl_frames = args.frames
         dl_thumbnail = args.thumbnail
 
+    proxy_list = (
+        [p.strip() for p in args.proxies.split(",") if p.strip()]
+        if args.proxies
+        else []
+    )
+
     status = process_video(
         video_id=args.id,
         download_audio=dl_audio,
@@ -359,6 +386,8 @@ if __name__ == "__main__":
         download_thumbnail=dl_thumbnail,
         output_dir=args.output,
         cookies_dir=args.cookies_dir,
+        use_proxies=args.use_proxies,
+        proxy_list=proxy_list,
     )
 
     if status != "SUCCESS":

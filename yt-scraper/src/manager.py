@@ -89,8 +89,10 @@ def build_downloader_cli_args(
     output_dir: str,
     cookies_dir: str,
     download_opts: dict,
+    use_proxies: bool = False,
+    raw_proxies: str = "",
 ) -> list[str]:
-    """Monta o comando CLI com os argumentos modulares para o video_downloader.py."""
+    """Monta o comando CLI com os argumentos modulares e proxies para o video_downloader.py."""
     cmd = [
         sys.executable,
         downloader_script,
@@ -109,6 +111,9 @@ def build_downloader_cli_args(
         cmd.append("--frames")
     if download_opts.get("thumbnail"):
         cmd.append("--thumbnail")
+    if use_proxies and raw_proxies:
+        cmd.append("--use-proxies")
+        cmd.extend(["--proxies", raw_proxies])
     return cmd
 
 
@@ -159,7 +164,9 @@ def persist_and_cleanup_video(
 
     # verifica se há arquivos de legenda entre os uploads para definir source_type e s3_key
     subtitle_assets = [
-        a for a in uploaded_assets if a["filename"].lower().endswith((".srt", ".vtt"))
+        a
+        for a in uploaded_assets
+        if a["filename"].lower().endswith((".srt", ".vtt"))
     ]
 
     # verificacoes para adicao no banco postgres
@@ -209,6 +216,8 @@ def worker_process(
     cookie_path,
     output_dir,
     download_opts,
+    use_proxies,
+    raw_proxies,
     pg_config,
     s3_config,
     bot_token,
@@ -219,125 +228,128 @@ def worker_process(
     work_dir = os.path.abspath(f"worker_env_profile_{profile_id}")
     os.makedirs(work_dir, exist_ok=True)
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    source_downloader = os.path.join(script_dir, "video_downloader.py")
-
-    shutil.copy(cookie_path, os.path.join(work_dir, "cookies_base.txt"))
-    downloader_copy = os.path.join(work_dir, "video_downloader.py")
-    shutil.copy(source_downloader, downloader_copy)
-    sync_manager = StorageSyncManager(pg_config=pg_config, s3_config=s3_config)
-
-    with open(csv_slice["path"], mode="r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        headers = reader.fieldnames
-        rows = list(reader)
-
-    pending_videos = rows.copy()
-    extracted_videos = 0
-    block_detected = False
-    cookie_name = os.path.basename(cookie_path)
-    abs_output_dir = os.path.abspath(output_dir)
-
-    for row in rows:
-        video_id = row.get("Video_id") or row.get("video_id")
-        if not video_id:
-            continue
-
-        cmd = build_downloader_cli_args(
-            downloader_script=downloader_copy,
-            video_id=video_id,
-            output_dir=abs_output_dir,
-            cookies_dir=work_dir,
-            download_opts=download_opts,
-        )
-
-        proc = subprocess.run(
-            cmd,
-            cwd=work_dir,
-            capture_output=True,
-            text=True,
-        )
-
-        combined_output = f"{proc.stdout}\n{proc.stderr}"
-        print(combined_output.strip())
-
-        if proc.returncode == 0:
-            try:
-                persist_and_cleanup_video(
-                    sync_manager=sync_manager,
-                    video_id=video_id,
-                    abs_output_dir=abs_output_dir,
-                )
-                extracted_videos += 1
-                if row in pending_videos:
-                    pending_videos.remove(row)
-            except Exception as sync_err:
-                print(
-                    f"[Sync Error] Falha ao salvar vídeo {video_id} no S3/DB:"
-                    f" {sync_err}"
-                )
-        else:
-            if (
-                "bloqueio detectado" in combined_output.lower()
-                or "falha crítica" in combined_output.lower()
-            ):
-                block_detected = True
-                block_msg = (
-                    f"⚠️ *Bloqueio Detectado (Perfil {profile_id})*\n"
-                    f"- Cookie: `{cookie_name}`\n"
-                    f"- Vídeo: `{video_id}`\n"
-                    "- Ação: Worker encerrado preventivamente."
-                )
-                send_telegram_message(block_msg, bot_token, chat_id)
-                break
-
-    total_time = time.time() - start_time
-    formatted_time = str(timedelta(seconds=int(total_time)))
-
-    os.makedirs("relatorios", exist_ok=True)
-    report_path = os.path.join(
-        "relatorios", f"relatorio_perfil_{profile_id}.txt"
-    )
-
-    report_content = (
-        f"========================================\n"
-        f"RELATÓRIO DE EXTRAÇÃO - PERFIL {profile_id}\n"
-        f"========================================\n"
-        f"Arquivo de Cookie: {cookie_name}\n"
-        f"Total de Vídeos Alocados: {len(rows)}\n"
-        f"Vídeos Extraídos e Sincronizados: {extracted_videos}\n"
-        f"Vídeos Pendentes/Restantes: {len(pending_videos)}\n"
-        f"Status Final: {'BLOQUEADO (Bot Block)' if block_detected else 'CONCLUÍDO'}\n"
-        f"Tempo de Execução: {formatted_time}\n"
-        f"========================================\n"
-    )
-
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write(report_content)
-
-    telegram_msg = (
-        f"*Relatório do Perfil {profile_id}*\n\n"
-        f"*Cookie:* `{cookie_name}`\n"
-        f"*Sincronizados (S3 + DB):* {extracted_videos}/{len(rows)}\n"
-        f"*Pendentes:* {len(pending_videos)}\n"
-        f"*Tempo:* {formatted_time}\n"
-        f"*Status:* {'🚫 Bloqueado pelo YouTube' if block_detected else '✅ Finalizado com Sucesso'}"
-    )
-    send_telegram_message(telegram_msg, bot_token, chat_id)
-
     try:
-        shutil.rmtree(work_dir)
-    except Exception:
-        pass
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        source_downloader = os.path.join(script_dir, "video_downloader.py")
 
-    return {
-        "profile_id": profile_id,
-        "extracted": extracted_videos,
-        "pending": pending_videos,
-        "blocked": block_detected,
-        "time": total_time,
-        "fieldnames": headers,
-    }
+        shutil.copy(cookie_path, os.path.join(work_dir, "cookies_base.txt"))
+        downloader_copy = os.path.join(work_dir, "video_downloader.py")
+        shutil.copy(source_downloader, downloader_copy)
+        sync_manager = StorageSyncManager(
+            pg_config=pg_config, s3_config=s3_config
+        )
+
+        with open(csv_slice["path"], mode="r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            headers = reader.fieldnames
+            rows = list(reader)
+
+        pending_videos = rows.copy()
+        extracted_videos = 0
+        block_detected = False
+        cookie_name = os.path.basename(cookie_path)
+        abs_output_dir = os.path.abspath(output_dir)
+
+        for row in rows:
+            video_id = row.get("Video_id") or row.get("video_id")
+            if not video_id:
+                continue
+
+            cmd = build_downloader_cli_args(
+                downloader_script=downloader_copy,
+                video_id=video_id,
+                output_dir=abs_output_dir,
+                cookies_dir=work_dir,
+                download_opts=download_opts,
+                use_proxies=use_proxies,
+                raw_proxies=raw_proxies,
+            )
+
+            proc = subprocess.run(
+                cmd,
+                cwd=work_dir,
+                capture_output=True,
+                text=True,
+            )
+
+            combined_output = f"{proc.stdout}\n{proc.stderr}"
+            print(combined_output.strip())
+
+            if proc.returncode == 0:
+                try:
+                    persist_and_cleanup_video(
+                        sync_manager=sync_manager,
+                        video_id=video_id,
+                        abs_output_dir=abs_output_dir,
+                        download_opts=download_opts,
+                    )
+                    extracted_videos += 1
+                    if row in pending_videos:
+                        pending_videos.remove(row)
+                except Exception as sync_err:
+                    print(
+                        f"[Sync Error] Falha ao salvar vídeo {video_id} no"
+                        f" S3/DB: {sync_err}"
+                    )
+            else:
+                if (
+                    "bloqueio detectado" in combined_output.lower()
+                    or "falha crítica" in combined_output.lower()
+                ):
+                    block_detected = True
+                    block_msg = (
+                        f"⚠️ *Bloqueio Detectado (Perfil {profile_id})*\n"
+                        f"- Cookie: `{cookie_name}`\n"
+                        f"- Vídeo: `{video_id}`\n"
+                        "- Ação: Worker encerrado preventivamente."
+                    )
+                    send_telegram_message(block_msg, bot_token, chat_id)
+                    break
+
+        total_time = time.time() - start_time
+        formatted_time = str(timedelta(seconds=int(total_time)))
+
+        os.makedirs("relatorios", exist_ok=True)
+        report_path = os.path.join(
+            "relatorios", f"relatorio_perfil_{profile_id}.txt"
+        )
+
+        report_content = (
+            f"========================================\n"
+            f"RELATÓRIO DE EXTRAÇÃO - PERFIL {profile_id}\n"
+            f"========================================\n"
+            f"Arquivo de Cookie: {cookie_name}\n"
+            f"Total de Vídeos Alocados: {len(rows)}\n"
+            f"Vídeos Extraídos e Sincronizados: {extracted_videos}\n"
+            f"Vídeos Pendentes/Restantes: {len(pending_videos)}\n"
+            f"Status Final: {'BLOQUEADO (Bot Block)' if block_detected else 'CONCLUÍDO'}\n"
+            f"Tempo de Execução: {formatted_time}\n"
+            f"========================================\n"
+        )
+
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(report_content)
+
+        telegram_msg = (
+            f"*Relatório do Perfil {profile_id}*\n\n"
+            f"*Cookie:* `{cookie_name}`\n"
+            f"*Sincronizados (S3 + DB):* {extracted_videos}/{len(rows)}\n"
+            f"*Pendentes:* {len(pending_videos)}\n"
+            f"*Tempo:* {formatted_time}\n"
+            f"*Status:* {'🚫 Bloqueado pelo YouTube' if block_detected else '✅ Finalizado com Sucesso'}"
+        )
+        send_telegram_message(telegram_msg, bot_token, chat_id)
+
+        return {
+            "profile_id": profile_id,
+            "extracted": extracted_videos,
+            "pending": pending_videos,
+            "blocked": block_detected,
+            "time": total_time,
+            "fieldnames": headers,
+        }
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def main():
@@ -375,7 +387,11 @@ def main():
     }
     active_modules = [k for k, v in download_opts.items() if v]
 
-    # secao s3
+    # Configurações de proxy
+    use_proxies = config.getboolean("DEFAULT", "using_proxy", fallback=False)
+    raw_proxies = config.get("DEFAULT", "proxies_list", fallback="").strip()
+
+    # Seção S3
     s3_config = {
         "endpoint": config.get("S3", "endpoint"),
         "port": config.get("S3", "port", fallback=None),
@@ -384,7 +400,7 @@ def main():
         "bucket_name": config.get("S3", "bucket_name"),
     }
 
-    # secao POSTGRES
+    # Seção POSTGRES
     pg_config = {
         "host": config.get("POSTGRES", "host"),
         "port": config.getint("POSTGRES", "port", fallback=5432),
@@ -393,7 +409,7 @@ def main():
         "password": config.get("POSTGRES", "password"),
     }
 
-    # secao TELEGRAM
+    # Seção TELEGRAM
     bot_token = config.get("TELEGRAM", "bot_token", fallback="")
     chat_id = config.get("TELEGRAM", "chat_id", fallback="")
 
@@ -406,6 +422,8 @@ def main():
 
     print(f"Found {len(cookie_files)} cookies for processing.")
     print(f"Enabled extraction modules: {', '.join(active_modules)}")
+    if use_proxies and raw_proxies:
+        print(f"Proxy rotation enabled: {raw_proxies}")
 
     # consulta vídeos já registrados no Postgres para filtrar o CSV
     root_sync = StorageSyncManager(pg_config=pg_config, s3_config=s3_config)
@@ -447,9 +465,13 @@ def main():
             writer.writerows(current_slice)
         sub_csv_files.append({"path": sub_path, "quantity": len(current_slice)})
 
+    proxy_status_str = (
+        f"Ativo ({raw_proxies})" if (use_proxies and raw_proxies) else "Direto"
+    )
     start_msg = (
         f"*INICIANDO NOVO CICLO DE EXTRAÇÃO*\n\n"
         f"*Módulos Ativos:* `{', '.join(active_modules)}`\n"
+        f"*Rede/Proxies:* `{proxy_status_str}`\n"
         f"*Total no CSV Alvo:* {original_total}\n"
         f"*Já Sincronizados no DB:* {already_processed}\n"
         f"*Faltam Processar:* {len(pending_records)}\n"
@@ -472,6 +494,8 @@ def main():
                     cookie_file,
                     output_dir,
                     download_opts,
+                    use_proxies,
+                    raw_proxies,
                     pg_config,
                     s3_config,
                     bot_token,
