@@ -262,8 +262,8 @@ def process_video(
     use_proxies=False,
     proxy_list=None,
 ):
-    """Função orquestradora que retorna 'SUCCESS', 'UNAVAILABLE', 'BOT_BLOCK',
-    'SESSION_BLOCK' ou 'ERROR'."""
+    """Função orquestradora que retorna 'SUCCESS', 'UNAVAILABLE', 'AGE_RESTRICTED',
+    'BOT_BLOCK', 'SESSION_BLOCK' ou 'ERROR'."""
     global current_proxy_index
     current_proxy_index = load_proxy_index(cookies_dir)
     last_status = "BOT_BLOCK"
@@ -339,6 +339,15 @@ def process_video(
                     " Nao e bloqueio de IP."
                 )
                 return "SESSION_BLOCK"
+
+            # Restrição de idade: exige conta logada e verificada, então trocar
+            # de proxy não resolve e não vale rotacionar.
+            if "confirm your age" in error_str:
+                shutil.rmtree(f"{output_dir}/{video_id}", ignore_errors=True)
+                print(
+                    f"[{video_id}] Video com restricao de idade. Pulando..."
+                )
+                return "AGE_RESTRICTED"
 
             # 429 pontual (ex.: legendas): erro transitório, não é bloqueio.
             rate_limit_indicators = (
@@ -479,5 +488,7 @@ if __name__ == "__main__":
         sys.exit(2)
     elif status == "SESSION_BLOCK":
         sys.exit(3)
+    elif status == "AGE_RESTRICTED":
+        sys.exit(4)
     elif status != "SUCCESS":
         sys.exit(1)

@@ -331,6 +331,14 @@ def worker_process(
                 if row in pending_videos:
                     pending_videos.remove(row)
                 continue
+            elif proc.returncode == 4:
+                print(
+                    f">> [PERFIL {profile_id}] [{video_id}] [PULADO] Video com restricao de idade.",
+                    flush=True,
+                )
+                if row in pending_videos:
+                    pending_videos.remove(row)
+                continue
             elif proc.returncode == 3:
                 session_blocked = True
                 print(
