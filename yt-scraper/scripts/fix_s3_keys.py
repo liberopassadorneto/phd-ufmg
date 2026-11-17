@@ -22,15 +22,16 @@ def fix_s3_keys(conf_path="config.conf", dry_run=True):
         with conn.cursor() as cur:
             # Verifica quantos registros têm caminho completo (ex: data/<id>/arquivo.ext ou data/<id>/frames/)
             cur.execute("""
-                SELECT video_id, s3_key
-                FROM phd_pipeline.transcript
-                WHERE s3_key LIKE 'data/%/%';
+                SELECT t.id, v.youtube_video_id, t.s3_key
+                FROM phd_pipeline.transcript t
+                JOIN phd_pipeline.video v ON v.id = t.video_id
+                WHERE t.s3_key LIKE 'data/%/%';
             """)
             outdated_rows = cur.fetchall()
 
             print(f"[INFO] Registros encontrados com s3_key completo: {len(outdated_rows)}")
-            for vid, old_key in outdated_rows[:5]:
-                print(f"  Exemplo: '{old_key}'  -->  'data/{vid}'")
+            for _, youtube_id, old_key in outdated_rows[:5]:
+                print(f"  Exemplo: '{old_key}'  -->  'data/{youtube_id}'")
 
             if not outdated_rows:
                 print("[OK] Nenhum registro precisa de atualizacao.")
@@ -41,9 +42,11 @@ def fix_s3_keys(conf_path="config.conf", dry_run=True):
                 return
 
             cur.execute("""
-                UPDATE phd_pipeline.transcript
-                SET s3_key = 'data/' || youtube_video_id
-                WHERE s3_key LIKE 'data/%/%';
+                UPDATE phd_pipeline.transcript t
+                SET s3_key = 'data/' || v.youtube_video_id
+                FROM phd_pipeline.video v
+                WHERE v.id = t.video_id
+                AND t.s3_key LIKE 'data/%/%';
             """)
             updated_count = cur.rowcount
             conn.commit()
