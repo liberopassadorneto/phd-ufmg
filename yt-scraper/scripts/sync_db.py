@@ -15,9 +15,9 @@ THUMB_EXTS = {"jpg", "jpeg", "png", "webp"}
 INSERT_SQL = """
     INSERT INTO phd_pipeline.transcript
         (video_id, source_type, language_code, file_format,
-         acquired_at, s3_bucket, s3_key, size_bytes)
+         acquired_at, s3_bucket, bucket_key, size_bytes)
     VALUES (%s, %s, %s, %s, COALESCE(%s, now()), %s, %s, %s)
-    ON CONFLICT (s3_bucket, s3_key)
+    ON CONFLICT (s3_bucket, bucket_key)
     DO UPDATE SET
         source_type = EXCLUDED.source_type,
         file_format = EXCLUDED.file_format,
@@ -33,72 +33,66 @@ def load_config(conf_path="config.conf"):
     return config
 
 
-def list_folder(s3, bucket, prefix):
-    """Equivalente a um 'ls': retorna (arquivos, subpastas) diretamente sob o prefixo."""
-    files, folders = [], []
+def scan_all_bucket_objects(s3, bucket, prefix=BUCKET_PREFIX):
+    """
+    Lista todos os objetos sob 'data/' de uma só vez e agrupa por youtube_video_id em memória.
+    """
+    grouped = {}
     paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/"):
-        files.extend(
-            obj for obj in page.get("Contents", []) if obj["Key"] != prefix
-        )
-        folders.extend(cp["Prefix"] for cp in page.get("CommonPrefixes", []))
-    return files, folders
+    total_objects = 0
 
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if not key.startswith(prefix) or key == prefix:
+                continue
 
-def build_video_row(video_pk, youtube_id, files, folders):
-    """
-    Inspeciona os arquivos e pastas encontrados em data/<youtube_id>/ no S3
-    e monta uma linha consolidada para phd_pipeline.transcript.
-    """
-    if not files and not folders:
-        return None
+            rel = key[len(prefix) :]
+            parts = rel.split("/", 1)
+            if len(parts) < 2 or not parts[0] or not parts[1]:
+                continue
 
-    found_tags = set()
-    has_manual_sub = False
-    total_size = 0
-    latest_modified = None
+            yt_id, sub_path = parts[0], parts[1]
+            entry = grouped.setdefault(
+                yt_id,
+                {
+                    "tags": set(),
+                    "has_manual_sub": False,
+                    "size_bytes": 0,
+                    "latest_modified": None,
+                },
+            )
 
-    for obj in files:
-        name = obj["Key"].rsplit("/", 1)[-1].lower()
-        ext = name.rsplit(".", 1)[-1] if "." in name else ""
-        total_size += obj.get("Size", 0)
+            total_objects += 1
+            entry["size_bytes"] += obj.get("Size", 0)
 
-        last_mod = obj.get("LastModified")
-        if last_mod and (
-            latest_modified is None or last_mod > latest_modified
-        ):
-            latest_modified = last_mod
+            last_mod = obj.get("LastModified")
+            if last_mod and (
+                entry["latest_modified"] is None
+                or last_mod > entry["latest_modified"]
+            ):
+                entry["latest_modified"] = last_mod
 
-        if ext in AUDIO_EXTS:
-            found_tags.add("AUDIO")
-        elif ext in SUBTITLE_EXTS:
-            found_tags.add("SUBS")
-            if name.startswith("manual_"):
-                has_manual_sub = True
-        elif ext in THUMB_EXTS:
-            found_tags.add("THUMB")
+            lower_sub = sub_path.lower()
+            if lower_sub.startswith("frames/"):
+                entry["tags"].add("FRAMES")
+            else:
+                filename = lower_sub.rsplit("/", 1)[-1]
+                ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
+                if ext in AUDIO_EXTS:
+                    entry["tags"].add("AUDIO")
+                elif ext in SUBTITLE_EXTS:
+                    entry["tags"].add("SUBS")
+                    if filename.startswith("manual_"):
+                        entry["has_manual_sub"] = True
+                elif ext in THUMB_EXTS:
+                    entry["tags"].add("THUMB")
 
-    for folder_prefix in folders:
-        folder_name = folder_prefix.rstrip("/").rsplit("/", 1)[-1].lower()
-        if folder_name == "frames":
-            found_tags.add("FRAMES")
-
-    # Mantém ordem padronizada e compatível com VARCHAR(20)
-    ordered_tags = [
-        tag for tag in ("AUDIO", "FRAMES", "SUBS", "THUMB") if tag in found_tags
-    ]
-    file_format = ",".join(ordered_tags) if ordered_tags else "UNKNOWN"
-    source_type = "YOUTUBE_MANUAL" if has_manual_sub else "YOUTUBE_AUTOMATIC"
-
-    return {
-        "video_id": video_pk,
-        "source_type": source_type,
-        "language_code": DEFAULT_LANGUAGE,
-        "file_format": file_format,
-        "s3_key": f"{BUCKET_PREFIX}{youtube_id}",
-        "size_bytes": total_size,
-        "acquired_at": latest_modified,
-    }
+    print(
+        f"[INFO] S3 escaneado: {total_objects} objetos em {len(grouped)} pastas de videos.",
+        flush=True,
+    )
+    return grouped
 
 
 def populate_transcript(conf_path="config.conf", dry_run=True):
@@ -119,8 +113,9 @@ def populate_transcript(conf_path="config.conf", dry_run=True):
         aws_secret_access_key=config.get("S3", "secret_key"),
     )
 
-    _, video_folders = list_folder(s3, bucket, BUCKET_PREFIX)
-    bucket_ids = sorted(f.rstrip("/").rsplit("/", 1)[-1] for f in video_folders)
+    print("[INFO] Listando objetos no S3...", flush=True)
+    grouped_videos = scan_all_bucket_objects(s3, bucket, BUCKET_PREFIX)
+    bucket_ids = sorted(grouped_videos.keys())
 
     conn = psycopg2.connect(
         host=config.get("POSTGRES", "host"),
@@ -143,7 +138,7 @@ def populate_transcript(conf_path="config.conf", dry_run=True):
             video_pk_by_id = dict(cur.fetchall())
 
             cur.execute(
-                "SELECT s3_key FROM phd_pipeline.transcript WHERE s3_bucket = %s;",
+                "SELECT bucket_key FROM phd_pipeline.transcript WHERE s3_bucket = %s;",
                 (bucket,),
             )
             existing_keys = {row[0] for row in cur.fetchall()}
@@ -161,19 +156,37 @@ def populate_transcript(conf_path="config.conf", dry_run=True):
                 if video_pk is None:
                     continue
 
-                files, folders = list_folder(
-                    s3, bucket, f"{BUCKET_PREFIX}{youtube_id}/"
+                info = grouped_videos[youtube_id]
+                ordered_tags = [
+                    tag
+                    for tag in ("AUDIO", "FRAMES", "SUBS", "THUMB")
+                    if tag in info["tags"]
+                ]
+                file_format = (
+                    ",".join(ordered_tags) if ordered_tags else "UNKNOWN"
                 )
-                row = build_video_row(video_pk, youtube_id, files, folders)
-                if row is None:
-                    continue
+                source_type = (
+                    "YOUTUBE_MANUAL"
+                    if info["has_manual_sub"]
+                    else "YOUTUBE_AUTOMATIC"
+                )
+                bucket_key = f"{BUCKET_PREFIX}{youtube_id}"
 
-                if row["s3_key"] in existing_keys:
+                if bucket_key in existing_keys:
                     already_exist += 1
-                rows_to_sync.append(row)
+
+                rows_to_sync.append({
+                    "video_id": video_pk,
+                    "source_type": source_type,
+                    "language_code": DEFAULT_LANGUAGE,
+                    "file_format": file_format,
+                    "bucket_key": bucket_key,
+                    "size_bytes": info["size_bytes"],
+                    "acquired_at": info["latest_modified"],
+                })
 
             print(
-                f"[INFO] Total inspecionado: {len(rows_to_sync)} | "
+                f"[INFO] Total a sincronizar: {len(rows_to_sync)} | "
                 f"Novos: {len(rows_to_sync) - already_exist} | "
                 f"Ja existentes (serao atualizados): {already_exist}"
             )
@@ -183,7 +196,7 @@ def populate_transcript(conf_path="config.conf", dry_run=True):
             )
             for row in rows_to_sync[:5]:
                 print(
-                    f"  Exemplo: {row['file_format']:<22} | {row['source_type']:<17} | {row['s3_key']}"
+                    f"  Exemplo: {row['file_format']:<22} | {row['source_type']:<17} | {row['bucket_key']}"
                 )
 
             if not rows_to_sync:
@@ -207,7 +220,7 @@ def populate_transcript(conf_path="config.conf", dry_run=True):
                         row["file_format"],
                         row["acquired_at"],
                         bucket,
-                        row["s3_key"],
+                        row["bucket_key"],
                         row["size_bytes"],
                     ),
                 )

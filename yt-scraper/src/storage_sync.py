@@ -15,9 +15,9 @@ class TranscriptRecord:
     youtube_video_id: str
     source_type: str  # 'YOUTUBE_MANUAL' ou 'YOUTUBE_AUTOMATIC'
     language_code: str
-    file_format: str  # Ex: 'AUDIO', 'FRAMES', 'AUDIO,FRAMES' (baseado no .conf)
+    file_format: str  # Ex: 'AUDIO,FRAMES,SUBS,THUMB'
     s3_bucket: str
-    s3_key: str
+    bucket_key: str  # Prefixo único no bucket: 'data/<youtube_video_id>'
     size_bytes: Optional[int] = None
     acquisition_tool: str = "yt-dlp"
     acquisition_tool_version: Optional[str] = yt_dlp.version.__version__
@@ -53,7 +53,7 @@ class StorageSyncManager:
     def save_transcript_to_db(self, record: TranscriptRecord) -> int:
         """
         Busca o ID interno correspondente em phd_pipeline.video comparando
-        youtube_video_id e insere/atualiza a linha em phd_pipeline.transcript.
+        youtube_video_id e insere/atualiza o registro único em phd_pipeline.transcript.
         """
         select_video_sql = """
             SELECT id
@@ -70,18 +70,18 @@ class StorageSyncManager:
                 acquisition_tool,
                 acquisition_tool_version,
                 s3_bucket,
-                s3_key,
+                bucket_key,
                 size_bytes
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (video_id, source_type, language_code)
+            ON CONFLICT (s3_bucket, bucket_key)
             DO UPDATE SET
+                source_type = EXCLUDED.source_type,
+                language_code = EXCLUDED.language_code,
                 file_format = EXCLUDED.file_format,
                 acquisition_tool = EXCLUDED.acquisition_tool,
                 acquisition_tool_version = EXCLUDED.acquisition_tool_version,
                 acquired_at = now(),
-                s3_bucket = EXCLUDED.s3_bucket,
-                s3_key = EXCLUDED.s3_key,
                 size_bytes = EXCLUDED.size_bytes
             RETURNING id;
         """
@@ -109,7 +109,7 @@ class StorageSyncManager:
                             record.acquisition_tool,
                             record.acquisition_tool_version,
                             record.s3_bucket,
-                            record.s3_key,
+                            record.bucket_key,
                             record.size_bytes,
                         ),
                     )
@@ -137,7 +137,7 @@ class StorageSyncManager:
                 continue
 
             rel_path_to_video = os.path.relpath(local_path, video_folder)
-            s3_key = f"data/{youtube_video_id}/{rel_path_to_video}".replace(
+            object_key = f"data/{youtube_video_id}/{rel_path_to_video}".replace(
                 "\\", "/"
             )
             file_size = os.path.getsize(local_path)
@@ -145,7 +145,7 @@ class StorageSyncManager:
             self.s3.upload_file(
                 local_path,
                 self.bucket_name,
-                s3_key,
+                object_key,
                 Config=transfer_cfg,
             )
 
@@ -153,7 +153,7 @@ class StorageSyncManager:
                 "local_path": local_path,
                 "filename": os.path.basename(local_path),
                 "s3_bucket": self.bucket_name,
-                "s3_key": s3_key,
+                "s3_key": object_key,
                 "size_bytes": file_size,
             })
 

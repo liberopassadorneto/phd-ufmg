@@ -119,7 +119,7 @@ def build_downloader_cli_args(
 
 def resolve_downloaded_modality_label(download_opts: dict) -> str:
     """
-    Gera a string padronizada (<= 20 chars) para a coluna file_format
+    Gera a string padronizada para a coluna file_format
     com base nas flags ativas no config.conf.
     """
     tags = []
@@ -143,7 +143,7 @@ def persist_and_cleanup_video(
 ) -> None:
     """
     1. Envia dados brutos do vídeo para o bucket S3.
-    2. Registra metadados na tabela phd_pipeline.transcript no Postgres.
+    2. Registra metadados consolidados na tabela phd_pipeline.transcript no Postgres.
     3. Exclui a pasta local de dados brutos do vídeo.
     """
     video_folder = os.path.join(abs_output_dir, str(video_id))
@@ -168,48 +168,30 @@ def persist_and_cleanup_video(
 
     modality_str = resolve_downloaded_modality_label(download_opts)
     total_size_bytes = sum(a["size_bytes"] for a in uploaded_assets)
-    s3_prefix_key = f"data/{video_id}"
+    bucket_prefix_key = f"data/{video_id}"
 
-    subtitle_assets = [
-        a
+    has_manual_sub = any(
+        a["filename"].lower().startswith("manual_")
+        and a["filename"].lower().endswith((".srt", ".vtt"))
         for a in uploaded_assets
-        if a["filename"].lower().endswith((".srt", ".vtt"))
-    ]
+    )
+    source_type = "YOUTUBE_MANUAL" if has_manual_sub else "YOUTUBE_AUTOMATIC"
 
-    # Etapa 2: Registro no Postgres
-    if subtitle_assets:
-        for asset in subtitle_assets:
-            source_type = (
-                "YOUTUBE_MANUAL"
-                if asset["filename"].lower().startswith("manual_")
-                else "YOUTUBE_AUTOMATIC"
-            )
-            record = TranscriptRecord(
-                youtube_video_id=str(video_id),
-                source_type=source_type,
-                language_code="pt",
-                file_format=modality_str,
-                s3_bucket=asset["s3_bucket"],
-                s3_key=s3_prefix_key,
-                size_bytes=asset["size_bytes"],
-            )
-            sync_manager.save_transcript_to_db(record)
-    else:
-        primary_asset = uploaded_assets[0]
-        record = TranscriptRecord(
-            youtube_video_id=str(video_id),
-            source_type="YOUTUBE_AUTOMATIC",
-            language_code="pt",
-            file_format=modality_str,
-            s3_bucket=primary_asset["s3_bucket"],
-            s3_key=s3_prefix_key,
-            size_bytes=total_size_bytes,
-        )
-        sync_manager.save_transcript_to_db(record)
+    # Etapa 2: Registro único consolidado no Postgres
+    record = TranscriptRecord(
+        youtube_video_id=str(video_id),
+        source_type=source_type,
+        language_code="pt",
+        file_format=modality_str,
+        s3_bucket=uploaded_assets[0]["s3_bucket"],
+        bucket_key=bucket_prefix_key,
+        size_bytes=total_size_bytes,
+    )
+    sync_manager.save_transcript_to_db(record)
 
     print(
         f">> [PERFIL {profile_id}] [{video_id}] [POSTGRES] Metadados salvos"
-        f" ({modality_str} | {s3_prefix_key}).",
+        f" ({modality_str} | {bucket_prefix_key}).",
         flush=True,
     )
 
