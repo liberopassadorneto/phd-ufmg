@@ -1,0 +1,1 @@
+grep -i "429" saida.log | grep -oP '\[[A-Za-z0-9_-]{11}\]' | tr -d '[]' | sort -u > ids_429.txt
