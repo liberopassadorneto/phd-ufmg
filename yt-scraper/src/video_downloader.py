@@ -7,6 +7,23 @@ import sys
 import yt_dlp
 
 current_proxy_index = 0
+PROXY_INDEX_FILE = "proxy_index.txt"
+
+
+def load_proxy_index(cookies_dir):
+    """Lê o índice do último proxy usado (cada vídeo roda em um processo novo)."""
+    try:
+        with open(os.path.join(cookies_dir, PROXY_INDEX_FILE)) as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return 0
+
+
+def save_proxy_index(cookies_dir, index):
+    """Persiste o índice do proxy atual para as próximas execuções do perfil."""
+    os.makedirs(cookies_dir, exist_ok=True)
+    with open(os.path.join(cookies_dir, PROXY_INDEX_FILE), "w") as f:
+        f.write(str(index))
 
 
 class _SilentLogger:
@@ -137,6 +154,8 @@ def download_media(
         "cookiefile": temp_cookie_path,
         "extractor_args": {"youtube": ["player_client=android"]},
         "remote_components": "ejs:github",
+        "retries": 2,
+        "socket_timeout": 15,
     }
 
     if target_proxy:
@@ -246,6 +265,8 @@ def process_video(
     """Função orquestradora que retorna 'SUCCESS', 'UNAVAILABLE', 'BOT_BLOCK',
     'SESSION_BLOCK' ou 'ERROR'."""
     global current_proxy_index
+    current_proxy_index = load_proxy_index(cookies_dir)
+    last_status = "BOT_BLOCK"
 
     if use_proxies and proxy_list:
         available_networks = proxy_list
@@ -288,9 +309,11 @@ def process_video(
                 print(
                     f"[{video_id}] Bloqueio/Rate-limit detectado na rede '{network_name}'."
                 )
+                last_status = "BOT_BLOCK"
                 current_proxy_index = (current_proxy_index + 1) % len(
                     available_networks
                 )
+                save_proxy_index(cookies_dir, current_proxy_index)
                 remaining_attempts -= 1
 
                 if remaining_attempts > 0:
@@ -351,13 +374,25 @@ def process_video(
                 )
                 return "UNAVAILABLE"
 
-            print(f"[{video_id}] Erro no processamento: {error_str}")
-            return "ERROR"
+            # Erro desconhecido (ex.: timeout no googlevideo.com): pode ser
+            # problema da rede/proxy atual, então tenta a próxima antes de desistir.
+            print(
+                f"[{video_id}] Erro no processamento ({network_name}): {e!r}"
+            )
+            last_status = "ERROR"
+            current_proxy_index = (current_proxy_index + 1) % len(
+                available_networks
+            )
+            save_proxy_index(cookies_dir, current_proxy_index)
+            remaining_attempts -= 1
+            continue
 
-    print(
-        f"[{video_id}] Falha critica: todas as conexoes falharam por bloqueio."
-    )
-    return "BOT_BLOCK"
+    if last_status == "BOT_BLOCK":
+        print(
+            f"[{video_id}] Falha critica: todas as conexoes falharam por"
+            " bloqueio."
+        )
+    return last_status
 
 
 if __name__ == "__main__":
