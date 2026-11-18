@@ -13,7 +13,7 @@ from claim_runner.runtime import (entrypoint, finish_loading, decode_generation,
                                   input_capacity, loading_options, stage)
 
 # Input is an existing file, not a model-card example or an automatic translation.
-DEFAULT_INPUT = ROOT / 'automatic.en.txt'
+DEFAULT_INPUT = ROOT / 'inputs' / 'automatic.en.txt'
 DEFAULT_OUTPUT = ROOT / 'results'
 # Published generation arguments; all other values come from the checkpoint.
 GENERATION = {'max_new_tokens': 20000, 'do_sample': True, 'temperature': 0.7, 'repetition_penalty': 1.0, 'top_p': 0.8, 'top_k': 20, 'min_p': 0.0}

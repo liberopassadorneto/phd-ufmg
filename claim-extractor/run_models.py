@@ -45,7 +45,6 @@ def parse_args(argv=None, model_alias=None):
     parser.add_argument("--output-dir", type=Path, help="Results root; defaults to each model's DEFAULT_OUTPUT")
     parser.add_argument("--staging-dir", type=Path, default=ROOT / ".model-staging")
     parser.add_argument("--storage", type=Path, help="Persistent local checkpoints, dependencies, caches and results")
-    parser.add_argument("--remote-storage", type=Path, help="SSHFS mount for persistent checkpoints, environments and results")
     parser.add_argument("--offline", action="store_true", help="Use prepared checkpoints; local storage also requires prepared dependencies")
     parser.add_argument("--ram-staging-dir", type=Path, default=Path("/dev/shm"))
     parser.add_argument("--runtime-dir", type=Path, default=ROOT / "runtimes")
@@ -55,8 +54,6 @@ def parse_args(argv=None, model_alias=None):
     parser.add_argument("--no-offload-fallback", action="store_true")
     parser.add_argument("--disk-reserve-gib", type=float, default=5)
     parser.add_argument("--ram-reserve-gib", type=float, default=8)
-    parser.add_argument("--gpu-reserve-gib", type=float, default=0,
-                        help="Deprecated compatibility option; no VRAM reserve is enforced")
     parser.add_argument("--context-tokens", type=int,
                         help="Explicit context ceiling; default comes from the model/tokenizer")
     limits = parser.add_mutually_exclusive_group()
@@ -67,11 +64,9 @@ def parse_args(argv=None, model_alias=None):
     parser.add_argument("--model-timeout", type=float, default=0,
                         help="Seconds per worker attempt; 0 disables timeout")
     args = parser.parse_args(argv)
-    if args.storage and args.remote_storage:
-        parser.error("--storage and --remote-storage are mutually exclusive")
-    if args.offline and not (args.storage or args.remote_storage):
-        parser.error("--offline requires --storage or --remote-storage")
-    for name in ("disk_reserve_gib", "ram_reserve_gib", "gpu_reserve_gib", "model_timeout"):
+    if args.offline and not args.storage:
+        parser.error("--offline requires --storage")
+    for name in ("disk_reserve_gib", "ram_reserve_gib", "model_timeout"):
         if getattr(args, name) < 0:
             parser.error(f"--{name.replace('_', '-')} must be nonnegative")
     if args.cpu_threads < 1 or any(value is not None and value < 1 for value in
@@ -169,7 +164,7 @@ def worker_command(args, spec, *extra):
 
 def runtime_environment(args, spec):
     env = os.environ.copy()
-    storage = args.storage or args.remote_storage
+    storage = args.storage
     if storage:
         env['UV_PROJECT_ENVIRONMENT'] = str(storage / 'venv' / spec.runtime)
     if args.storage and args.offline:
@@ -263,7 +258,7 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
                 pass
         if args.offline or persistent_ready:
             verification_started = time.perf_counter()
-            manifests = load_prepared(args.storage or args.remote_storage, spec)
+            manifests = load_prepared(args.storage, spec)
             record['checkpoint_verification_seconds'] = time.perf_counter() - verification_started
         else:
             manifests = [repository_manifest(spec.repo, spec.revision)]
@@ -291,7 +286,7 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
             if args.storage and not args.offline and not persistent_ready:
                 from claim_runner.prepared import publish
                 publish(args.storage, spec.alias, repositories)
-            record["persistent_checkpoints"] = bool(args.storage or args.remote_storage)
+            record["persistent_checkpoints"] = bool(args.storage)
         finally:
             record["download_seconds"] = time.perf_counter() - before
             record["download_resources"] = monitor.stop()
@@ -381,23 +376,6 @@ def main(argv=None, model_alias=None):
         args.staging_dir = args.storage / "tmp"
         args.ram_staging_dir = args.storage / "tmp" / ".disabled-ram-fallback"
         args.output_dir = args.output_dir or args.storage / "results" / (time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8])
-    if args.remote_storage:
-        root = args.remote_storage.expanduser().absolute()
-        check = subprocess.run(['findmnt', '-n', '-o', 'FSTYPE,TARGET,SOURCE', '--mountpoint', str(root)], capture_output=True, text=True)
-        fields = check.stdout.strip().split()
-        if check.returncode or len(fields) != 3 or fields[0] != 'fuse.sshfs' or fields[2] != 'marcele_araponga@150.164.2.42:/home/marcele_araponga/phd-models':
-            raise RuntimeError(f'Expected Greenwich SSHFS mount at {root}; refusing local fallback')
-        args.remote_storage = root
-        for directory in ('tmp', 'checkpoints', 'results', 'venv', 'cache/uv', 'cache/xdg', 'cache/torch', 'cache/triton', 'cache/cuda', 'cache/pip', 'huggingface', 'cache/nltk'):
-            (root / directory).mkdir(parents=True, exist_ok=True)
-        for key, path in {'UV_CACHE_DIR':'cache/uv', 'XDG_CACHE_HOME':'cache/xdg', 'TORCH_HOME':'cache/torch', 'TRITON_CACHE_DIR':'cache/triton', 'CUDA_CACHE_PATH':'cache/cuda', 'PIP_CACHE_DIR':'cache/pip', 'TMPDIR':'tmp', 'CLAIM_CHECKPOINT_CACHE':'checkpoints', 'CLAIM_NLTK_DIR':'cache/nltk'}.items():
-            os.environ[key] = str(root / path)
-        tempfile.tempdir = str(root / 'tmp')
-        args.staging_dir = root / 'tmp'
-        args.ram_staging_dir = root / 'tmp' / '.disabled-ram-fallback'
-        args.output_dir = args.output_dir or root / 'results'
-        if not args.output_dir.resolve().is_relative_to(root.resolve()):
-            raise RuntimeError('Remote profile requires output directory on the SSHFS mount')
     if not shutil.which("uv"):
         raise RuntimeError("uv is not installed")
     if platform.system() != "Linux":

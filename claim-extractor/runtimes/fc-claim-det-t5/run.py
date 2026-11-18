@@ -13,7 +13,7 @@ from claim_runner.runtime import (entrypoint, finish_loading, decode_generation,
                                   input_capacity, loading_options, stage)
 
 # Input is an existing file, not a model-card example or an automatic translation.
-DEFAULT_INPUT = ROOT / 'automatic.en.txt'
+DEFAULT_INPUT = ROOT / 'inputs' / 'automatic.en.txt'
 DEFAULT_OUTPUT = ROOT / 'results'
 # Published generation arguments; all other values come from the checkpoint.
 GENERATION = {'num_beams': 6, 'no_repeat_ngram_size': 2, 'min_length': 5, 'max_length': 15, 'early_stopping': True}

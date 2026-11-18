@@ -32,48 +32,14 @@ bash run-cuba.sh run --models all
 ```
 
 Checkpoints and dependencies remain stored after each run. `--checkpoints-only` preparation
-retains the legacy checkpoint-only workflow for Greenwich.
+prepares weights and cards without installing per-model dependencies.
 
-## Greenwich SSHFS (experimental)
+## Transcript inputs
 
-Prepare checkpoints on Greenwich (after `uv run hf auth login` for gated models):
-
-```bash
-cd ~/phd-ufmg/claim-extractor
-uv run --frozen prepare-models.py --models babelscape-t5 --storage ~/phd-models
-```
-
-Use `--models all` to prepare the catalog. On Cuba, after mounting Greenwich,
-pass `--offline --remote-storage ~/greenwich-models` to `run_models.py`.
-Offline refers to checkpoints: uv may still need network access to install the
-separate model environments. SHA-256 is checked during preparation only.
-Normal execution resolves the prepared manifest without scanning weight files,
-checking sizes or hashing. Weight validation is restricted to preparation.
-`run` does not launch CUDA/NF4 probes, compare dependency stamps, or impose a
-VRAM reserve. Libraries report loading/inference errors normally. Explicit
-`bash run-cuba.sh check --models all` retains runtime and CUDA/NF4 diagnostics.
-Metrics and logs are preserved. `--gpu-reserve-gib` is accepted for compatibility
-but has no effect.
-
-The optional `--remote-storage ~/greenwich-models` profile requires the exact
-Greenwich SSHFS mount. It stores per-model environments, checkpoints, caches,
-temporary files and results there. Checkpoints are reused by repository and
-revision; do not delete them while a run is active. The Hugging Face login
-remains in its existing location. The project source remains local.
-
-Run `bash run-greenwich.sh` from Cuba to execute the catalog sequentially with
-separate logs and a 7200-second timeout per attempt. Set
-`MODEL_TIMEOUT_SECONDS` to change that limit. Babelscape uses a 512-token input
-ceiling and both generic Mistral models use `prompts/shared-zero-shot-v2.md`.
-The script continues after individual failures and returns nonzero if any fail.
-It uses a new timestamped results directory on every invocation.
-
-For a single model, set `UV_PROJECT_ENVIRONMENT` and `UV_CACHE_DIR` on the
-mounted filesystem before running the root uv project, then pass
-`--remote-storage ~/greenwich-models`. Do not unmount during a run. Reconnect
-SSHFS using the server's existing mount procedure after a disconnect and verify
-with `findmnt -T ~/greenwich-models` before retrying. Remote operation has not
-yet been validated with real models; monitor local disk use during the pilot.
+Store input transcripts in `inputs/`. Use subdirectories per dataset or video as
+the collection grows; pass a specific file with `--input-en` or `--input-pt`.
+The bundled examples remain the defaults. No directory-wide execution or
+translation is performed automatically. Existing result snapshots are preserved.
 
 ## Future work
 
@@ -101,18 +67,17 @@ uv.lock          Locked dependencies for this model
 central worker does not choose model prompts or decoding parameters.
 Model libraries are imported inside the executor functions so listing models
 and reading configurations do not load Torch or model weights.
-The original `gemma-2b-aps-inference.py` remains a historical experiment;
-the current model entrypoints are the `run.py` files listed below.
+The model entrypoints are the `runtimes/<alias>/run.py` files listed below.
 
 Run these commands from the `claim-extractor` directory:
 
 ```bash
 uv run --frozen --project runtimes/gemma-2b-aps \
-  runtimes/gemma-2b-aps/run.py --input automatic.en.txt \
+  runtimes/gemma-2b-aps/run.py --input inputs/automatic.en.txt \
   --output-dir results/author-protocol
 
 uv run --frozen --project runtimes/claimpt \
-  runtimes/claimpt/run.py --input automatic.srt \
+  runtimes/claimpt/run.py --input inputs/automatic.srt \
   --output-dir results/author-protocol
 ```
 
@@ -191,7 +156,7 @@ Following those defaults does not guarantee extraction quality or valid JSON.
 ## Inputs and explicit overrides
 
 The default generator input is the existing frozen English translation
-`automatic.en.txt`. ClaimPT uses the original Portuguese `automatic.srt` after
+`inputs/automatic.en.txt`. ClaimPT uses the original Portuguese `inputs/automatic.srt` after
 caption indices and timestamps are removed. No runtime translation or ASR
 correction is performed. English generators require an English TXT or SRT.
 
@@ -204,7 +169,7 @@ adaptations, not reproduced author benchmarks.
 
 Gemma processes the whole passage when it fits and only partitions when context
 requires it. The existing seven-chunk APS file is used only when explicitly
-passed with `--aps-input automatic.en.aps-input.jsonl`. Oversized inputs are
+passed with `--aps-input inputs/automatic.en.aps-input.jsonl`. Oversized inputs are
 partitioned without discarding source text, including Detective inputs over
 4,000 characters. Each input partition gets its own native model response.
 
