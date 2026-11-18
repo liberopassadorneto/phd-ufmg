@@ -42,17 +42,17 @@ def send_telegram_message(text, bot_token, chat_id):
         return False
 
 
-def load_ids_429(path):
-    """Lê o txt com os IDs que já deram erro 429 (um por linha)."""
+def load_id_file(path):
+    """Lê um txt de IDs (um por linha), como os de 429 ou de idioma estrangeiro."""
     if not os.path.exists(path):
         return set()
     with open(path, encoding="utf-8") as f:
         return {line.strip() for line in f if line.strip()}
 
 
-def append_ids_429(path, new_ids):
-    """Adiciona ao final do txt os IDs novos com 429, sem duplicar os existentes."""
-    known_ids = load_ids_429(path)
+def append_id_file(path, new_ids):
+    """Adiciona ao final do txt os IDs novos, sem duplicar os existentes."""
+    known_ids = load_id_file(path)
     ids_to_add = [vid for vid in dict.fromkeys(new_ids) if vid not in known_ids]
     if not ids_to_add:
         return 0
@@ -71,7 +71,7 @@ def append_ids_429(path, new_ids):
 
 
 def load_and_filter_csv(csv_path, synced_ids: set[str], skip_ids=frozenset()):
-    """Lê o CSV original e remove os IDs já sincronizados no Postgres ou com 429 conhecido."""
+    """Lê o CSV original e remove os IDs já sincronizados no Postgres ou na lista de exclusão."""
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"Arquivo CSV nao encontrado em: {csv_path}")
 
@@ -96,7 +96,7 @@ def load_and_filter_csv(csv_path, synced_ids: set[str], skip_ids=frozenset()):
     original_total = len(rows)
     print(
         f"[INIT] Total CSV: {original_total} | Ja sincronizados no DB:"
-        f" {already_processed} | Pulados (429 conhecido): {skipped_429} |"
+        f" {already_processed} | Pulados (lista de exclusao): {skipped_429} |"
         f" Pendentes: {len(pending_rows)}"
     )
 
@@ -128,8 +128,8 @@ def build_downloader_cli_args(
     cmd = [
         sys.executable,
         downloader_script,
-        "--id",
-        str(video_id),
+        # '=' evita que o argparse trate IDs iniciados por '-' como uma flag
+        f"--id={video_id}",
         "--output",
         output_dir,
         "--cookies-dir",
@@ -282,6 +282,7 @@ def worker_process(
         block_detected = False
         session_blocked = False
         rate_limited_ids = []
+        foreign_ids = []
         cookie_name = os.path.basename(cookie_path)
         abs_output_dir = os.path.abspath(output_dir)
 
@@ -372,6 +373,15 @@ def worker_process(
                 if row in pending_videos:
                     pending_videos.remove(row)
                 continue
+            elif proc.returncode == 6:
+                print(
+                    f">> [PERFIL {profile_id}] [{video_id}] [PULADO] Video fora do idioma pt.",
+                    flush=True,
+                )
+                foreign_ids.append(str(video_id).strip())
+                if row in pending_videos:
+                    pending_videos.remove(row)
+                continue
             elif proc.returncode == 5:
                 print(
                     f">> [PERFIL {profile_id}] [{video_id}] [PULADO] Erro 429, ID sera registrado no txt de 429.",
@@ -438,6 +448,7 @@ def worker_process(
             f"Videos Extraidos e Sincronizados: {extracted_videos}\n"
             f"Videos Pendentes/Restantes: {len(pending_videos)}\n"
             f"Videos com erro 429: {len(rate_limited_ids)}\n"
+            f"Videos fora do idioma pt: {len(foreign_ids)}\n"
             f"Status Final: {status_label}\n"
             f"Tempo de Execucao: {formatted_time}\n"
             f"========================================\n"
@@ -461,6 +472,7 @@ def worker_process(
             "extracted": extracted_videos,
             "pending": pending_videos,
             "rate_limited": rate_limited_ids,
+            "foreign": foreign_ids,
             "blocked": block_detected or session_blocked,
             "time": total_time,
             "fieldnames": headers,
@@ -548,8 +560,15 @@ def main():
     synced_ids = root_sync.get_already_synced_youtube_ids()
 
     ids_429_path = config.get("DEFAULT", "ids_429", fallback="ids_429.txt")
-    known_429_ids = load_ids_429(ids_429_path)
+    known_429_ids = load_id_file(ids_429_path)
     print(f"[INIT] IDs com 429 conhecidos em '{ids_429_path}': {len(known_429_ids)}")
+
+    ids_foreign_path = config.get("DEFAULT", "ids_foreign", fallback="ids_foreign.txt")
+    known_foreign_ids = load_id_file(ids_foreign_path)
+    print(
+        f"[INIT] IDs fora do idioma pt conhecidos em '{ids_foreign_path}':"
+        f" {len(known_foreign_ids)}"
+    )
 
     (
         filtered_csv_path,
@@ -557,7 +576,9 @@ def main():
         headers,
         original_total,
         already_processed,
-    ) = load_and_filter_csv(target_csv, synced_ids, known_429_ids)
+    ) = load_and_filter_csv(
+        target_csv, synced_ids, known_429_ids | known_foreign_ids
+    )
 
     if not pending_records:
         print("[INIT] Todos os videos do CSV ja estao sincronizados. Encerrando.")
@@ -634,6 +655,7 @@ def main():
 
     all_unextracted = []
     new_429_ids = []
+    new_foreign_ids = []
     total_extracted = 0
     total_blocks = 0
 
@@ -641,11 +663,17 @@ def main():
         total_extracted += res["extracted"]
         all_unextracted.extend(res["pending"])
         new_429_ids.extend(res["rate_limited"])
+        new_foreign_ids.extend(res["foreign"])
         if res["blocked"]:
             total_blocks += 1
 
-    added_429 = append_ids_429(ids_429_path, new_429_ids)
+    added_429 = append_id_file(ids_429_path, new_429_ids)
     print(f"[429] {added_429} novo(s) ID(s) adicionado(s) a '{ids_429_path}'.")
+    added_foreign = append_id_file(ids_foreign_path, new_foreign_ids)
+    print(
+        f"[IDIOMA] {added_foreign} novo(s) ID(s) adicionado(s) a"
+        f" '{ids_foreign_path}'."
+    )
 
     final_pending_csv = "csv_not_extracted_final.csv"
     with open(final_pending_csv, mode="w", encoding="utf-8", newline="") as f:
@@ -677,6 +705,7 @@ def main():
         f"Total de videos sincronizados nesta sessao: {total_extracted}\n"
         f"Total de videos que ainda faltam: {len(all_unextracted)}\n"
         f"Novos IDs com erro 429 registrados: {added_429}\n"
+        f"Novos IDs fora do idioma pt registrados: {added_foreign}\n"
         f"Contas/Cookies que sofreram bloqueio: {total_blocks}\n"
         f"Tempo total decorrido: {overall_total_time}\n"
         f"========================================\n"
