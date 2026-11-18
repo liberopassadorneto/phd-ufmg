@@ -13,12 +13,12 @@ from claim_runner.runtime import (entrypoint, finish_loading, decode_generation,
                                   input_capacity, loading_options, stage)
 
 # Input is an existing file, not a model-card example or an automatic translation.
-DEFAULT_INPUT = ROOT / 'automatic.en.txt'
+DEFAULT_INPUT = ROOT / 'inputs' / 'automatic.en.txt'
 DEFAULT_OUTPUT = ROOT / 'results'
 # Published generation arguments; all other values come from the checkpoint.
 GENERATION = {'max_new_tokens': 2000, 'temperature': 0.3}
 # Explicit, authorized adaptations for RTX 2080 (8 GiB); not author defaults.
-HARDWARE = {'precision': 'nf4', 'offload_fallback': True}
+HARDWARE = {'precision': 'nf4', 'offload_fallback': False}
 INPUT_CONFIGURATION = {'preparation': 'author README article template', 'language': 'en', 'domain_adaptation': 'video transcript supplied as article'}
 SPEC = ModelSpec(
     alias='newsscope', repo='nidhipandya/NewsScope-lora', parameters_b=8.03,

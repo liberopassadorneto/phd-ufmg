@@ -1,38 +1,52 @@
 # Claim Extractor
 
-## Greenwich SSHFS (experimental)
+## Local execution on Cuba
 
-Prepare checkpoints on Greenwich (after `uv run hf auth login` for gated models):
+`--models all` excludes NewsScope on Cuba: its NF4 attempt exceeded the VRAM
+budget and RAM offload was too slow. Explicit `--models newsscope` remains
+available, with automatic RAM offload disabled.
+
+Prepare persistent weights, model cards and locked dependencies, then run the
+catalog sequentially without network access:
 
 ```bash
-cd ~/phd-ufmg/claim-extractor
-uv run --frozen prepare-models.py --models babelscape-t5 --storage ~/phd-models
+bash run-cuba.sh prepare --models all
+bash run-cuba.sh run --models all
 ```
 
-Use `--models all` to prepare the catalog. On Cuba, after mounting Greenwich,
-pass `--offline --remote-storage ~/greenwich-models` to `run_models.py`.
-Offline refers to checkpoints: uv may still need network access to install the
-separate model environments. The manifest validates SHA-256 before loading.
+Storage defaults to `~/phd-models`; override with `MODEL_STORAGE`. Results use
+a fresh timestamped directory under its `results/` folder. For one model, replace
+`all` in both commands with its alias. Local runs use the existing EN/PT input
+pair and the shared prompt for models requiring user instructions. Checkpoints
+and dependencies remain stored after each run. `inputs.json` freezes the processed
+transcripts; each model directory contains native `output.raw`/`output*.json`,
+`processing.json`, and per-attempt logs. Individual resource samples are not saved.
+`summary.json` is updated after each model with timings, average/peak VRAM/RAM, CPU
+average/peak percentages, CPU seconds, configured threads, and average/peak
+logical CPUs used (`vcpu_*_used`, CPU percentage divided by 100). Missing
+measurements remain null. This command runs all prepared models sequentially,
+continues after individual failures, and never overwrites previous runs:
 
-The optional `--remote-storage ~/greenwich-models` profile requires the exact
-Greenwich SSHFS mount. It stores per-model environments, checkpoints, caches,
-temporary files and results there. Checkpoints are reused by repository and
-revision; do not delete them while a run is active. The Hugging Face login
-remains in its existing location. The project source remains local.
+```bash
+bash run-cuba.sh run --models all
+```
 
-Run `bash run-greenwich.sh` from Cuba to execute the catalog sequentially with
-separate logs and a 7200-second timeout per attempt. Set
-`MODEL_TIMEOUT_SECONDS` to change that limit. Babelscape uses a 512-token input
-ceiling and both generic Mistral models use `prompts/shared-zero-shot-v2.md`.
-The script continues after individual failures and returns nonzero if any fail.
-It uses a new timestamped results directory on every invocation.
+Checkpoints and dependencies remain stored after each run. `--checkpoints-only` preparation
+prepares weights and cards without installing per-model dependencies.
 
-For a single model, set `UV_PROJECT_ENVIRONMENT` and `UV_CACHE_DIR` on the
-mounted filesystem before running the root uv project, then pass
-`--remote-storage ~/greenwich-models`. Do not unmount during a run. Reconnect
-SSHFS using the server's existing mount procedure after a disconnect and verify
-with `findmnt -T ~/greenwich-models` before retrying. Remote operation has not
-yet been validated with real models; monitor local disk use during the pilot.
+## CLI scripts
+
+`run-cuba.sh` invokes `scripts/prepare-models.py` for preparation and
+`scripts/run_models.py` for sequential execution. Both support `--help`.
+`claim_runner/` contains shared library code; `runtimes/<model>/run.py` remains
+the per-model executor and also supports direct CLI execution.
+
+## Transcript inputs
+
+Store input transcripts in `inputs/`. Use subdirectories per dataset or video as
+the collection grows; pass a specific file with `--input-en` or `--input-pt`.
+The bundled examples remain the defaults. No directory-wide execution or
+translation is performed automatically. Existing result snapshots are preserved.
 
 ## Future work
 
@@ -60,18 +74,17 @@ uv.lock          Locked dependencies for this model
 central worker does not choose model prompts or decoding parameters.
 Model libraries are imported inside the executor functions so listing models
 and reading configurations do not load Torch or model weights.
-The original `gemma-2b-aps-inference.py` remains a historical experiment;
-the current model entrypoints are the `run.py` files listed below.
+The model entrypoints are the `runtimes/<alias>/run.py` files listed below.
 
 Run these commands from the `claim-extractor` directory:
 
 ```bash
 uv run --frozen --project runtimes/gemma-2b-aps \
-  runtimes/gemma-2b-aps/run.py --input automatic.en.txt \
+  runtimes/gemma-2b-aps/run.py --input inputs/automatic.en.txt \
   --output-dir results/author-protocol
 
 uv run --frozen --project runtimes/claimpt \
-  runtimes/claimpt/run.py --input automatic.srt \
+  runtimes/claimpt/run.py --input inputs/automatic.srt \
   --output-dir results/author-protocol
 ```
 
@@ -88,10 +101,10 @@ The supervisor retains the existing model selection interface:
 ```bash
 uv sync --frozen
 uv run --frozen hf auth login
-uv run --frozen run_models.py --list-models
-uv run --frozen run_models.py --models gemma-2b-aps,detective-qwen3b \
+uv run --frozen scripts/run_models.py --list-models
+uv run --frozen scripts/run_models.py --models gemma-2b-aps,detective-qwen3b \
   --output-dir results/author-protocol
-uv run --frozen run_models.py --models all \
+uv run --frozen scripts/run_models.py --models all \
   --output-dir results/author-protocol-all
 ```
 
@@ -150,7 +163,7 @@ Following those defaults does not guarantee extraction quality or valid JSON.
 ## Inputs and explicit overrides
 
 The default generator input is the existing frozen English translation
-`automatic.en.txt`. ClaimPT uses the original Portuguese `automatic.srt` after
+`inputs/automatic.en.txt`. ClaimPT uses the original Portuguese `inputs/automatic.srt` after
 caption indices and timestamps are removed. No runtime translation or ASR
 correction is performed. English generators require an English TXT or SRT.
 
@@ -163,7 +176,7 @@ adaptations, not reproduced author benchmarks.
 
 Gemma processes the whole passage when it fits and only partitions when context
 requires it. The existing seven-chunk APS file is used only when explicitly
-passed with `--aps-input automatic.en.aps-input.jsonl`. Oversized inputs are
+passed with `--aps-input inputs/automatic.en.aps-input.jsonl`. Oversized inputs are
 partitioned without discarding source text, including Detective inputs over
 4,000 characters. Each input partition gets its own native model response.
 
@@ -198,7 +211,7 @@ uv run --frozen --project runtimes/dongyru-mistral \
   runtimes/dongyru-mistral/run.py --prompt-file /path/to/your-prompt.md \
   --output-dir results/user-prompt
 
-uv run --frozen run_models.py --models all \
+uv run --frozen scripts/run_models.py --models all \
   --prompt-file dongyru-mistral=/path/to/dongyru-prompt.md \
   --prompt-file mistral-instruct-v02=/path/to/mistral-prompt.md \
   --output-dir results/all-with-user-prompts
@@ -229,7 +242,7 @@ PEFT does not automatically redistribute the base first; adapter autocasting is
 disabled and small runtime buffers stay materialized. Babelscape and SAGESSE
 include protobuf for tokenizer loading.
 
-Staging reserves 5 GiB of disk, 8 GiB of RAM and 1 GiB of VRAM by default.
+Staging reserves 5 GiB of disk and 8 GiB of RAM by default. No VRAM reserve is imposed.
 If weights do not fit on disk, the supervisor can use an existing tmpfs such as
 `/dev/shm`, accounting for loading memory as well. SAGESSE needs about 27 GiB of
 weight staging. No mount or system configuration is created.
@@ -266,6 +279,13 @@ Times are seconds, memory/storage are GiB. CPU 100% approximates one logical CPU
 core; it is not GPU utilization. VRAM is GPU process memory from NVML when
 available, otherwise explicitly identified PyTorch allocated memory. Sampling is
 once per second, so brief peaks may be missed. Tmpfs staging consumes system RAM.
+Storage size and filesystem free space are measured only at the start and end
+of each monitoring period. Storage peak fields are the maximum observed at those
+boundaries and can miss intermediate peaks; CPU, RAM and VRAM keep one-second
+sampling. Only running sums, counts and peaks are kept internally; individual
+observations are discarded. Averages are sample means across valid worker
+observations (including loading and all attempts), not energy consumption.
+Unavailable averages are null; VRAM averages require NVML process measurements.
 
 `success` means execution completed, not that the claims are correct. `partial`
 means generation exhausted its budget without a stop token. Invalid JSON alone

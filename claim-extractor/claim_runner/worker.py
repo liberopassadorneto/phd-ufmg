@@ -7,7 +7,7 @@ import time
 import traceback
 from pathlib import Path
 
-from .resources import GIB, write_json
+from .resources import write_json
 from .outputs import write_outputs
 from .runtime import generation_configuration
 
@@ -64,24 +64,15 @@ def run(job_path, spec, load_model, prepare_chunks, infer):
     job['_stage'] = set_phase
     try:
         import torch
-        if not torch.cuda.is_available():
-            raise RuntimeError('CUDA is unavailable')
         if job.get('seed') is not None:
             torch.manual_seed(job['seed'])
             torch.cuda.manual_seed_all(job['seed'])
         torch.set_num_threads(job['cpu_threads'])
-        total = torch.cuda.get_device_properties(0).total_memory
-        free, _ = torch.cuda.mem_get_info(0)
-        budget = min(total, free) - job['gpu_reserve_bytes']
-        if budget < GIB:
-            raise RuntimeError('Insufficient VRAM after the configured reserve')
-        torch.cuda.set_per_process_memory_fraction(budget / total, device=0)
         torch.backends.cuda.enable_flash_sdp(False)
         torch.cuda.reset_peak_memory_stats(0)
         result['versions'] = {name:importlib.metadata.version(name)
                               for name in ('torch','transformers','accelerate')}
         result['gpu'] = torch.cuda.get_device_name(0)
-        result['gpu_budget_bytes'] = budget
         load_started = time.perf_counter()
         model, tokenizer = load_model(job)
         torch.cuda.synchronize()

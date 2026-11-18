@@ -1,0 +1,90 @@
+{
+  "model": "nidhipandya/NewsScope-lora",
+  "status": "failed",
+  "precision": "offload",
+  "gpu": "NVIDIA GeForce RTX 2080",
+  "inference_seconds": 0.0,
+  "loading_seconds": 174.21,
+  "preflight_seconds": 21.218,
+  "checkpoint_verification_seconds": 153.297,
+  "download_seconds": 0.623,
+  "total_seconds": 1394.167,
+  "vram_peak_gib": 6.793,
+  "vram_measurement": "NVML process memory",
+  "ram_peak_gib": 19.051,
+  "cpu_logical_count": 16,
+  "cpu_available_logical_count": 16,
+  "cpu_threads_configured": 8,
+  "vcpu_average_used": 0.94,
+  "vcpu_peak_used": 4.545,
+  "resource_sampling_interval_seconds": 1,
+  "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+  "resource_measurement_unavailable": [],
+  "cpu_average_percent": 93.97,
+  "cpu_peak_percent": 454.5,
+  "cpu_seconds": 114.446,
+  "temporary_storage_peak_gib": 0.0,
+  "temporary_storage_location": "disk",
+  "persistent_checkpoints": true,
+  "temporary_weights_removed": true,
+  "output_bytes": 0,
+  "configuration": {
+    "sources": {
+      "model_card": "https://huggingface.co/nidhipandya/NewsScope-lora",
+      "repository": "https://github.com/nidhip1611/NewsScope",
+      "inference": "https://github.com/nidhip1611/NewsScope/blob/main/README.md"
+    },
+    "generation": {
+      "max_new_tokens": 2000,
+      "do_sample": true,
+      "temperature": 0.3,
+      "top_p": 0.9,
+      "bos_token_id": 128000,
+      "eos_token_id": [
+        128001,
+        128008,
+        128009
+      ],
+      "transformers_version": "4.57.6",
+      "max_length": 20
+    },
+    "input": {
+      "preparation": "author README article template",
+      "language": "en",
+      "domain_adaptation": "video transcript supplied as article"
+    },
+    "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+    "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+    "input_partitioned": false,
+    "repositories": [
+      {
+        "repo": "nidhipandya/NewsScope-lora",
+        "revision": "16ddedf01ec278c8804a8edb41fa62cd81c00a64"
+      },
+      {
+        "repo": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "revision": "0e9e39f249a16976918f6564b8830bc894c89659"
+      }
+    ],
+    "hardware": {
+      "precision": "nf4",
+      "offload_fallback": true,
+      "selected_precision": "offload",
+      "selected_dtype": "float16"
+    },
+    "overrides": {}
+  },
+  "attempt_errors": [
+    {
+      "precision": "nf4",
+      "phase": "loading_adapter",
+      "type": "OutOfMemoryError",
+      "error": "CUDA out of memory. Tried to allocate 2.00 MiB. GPU 0 has a total capacity of 7.78 GiB of which 1007.38 MiB is free. Including non-PyTorch memory, this process has 6.79 GiB memory in use. 6.67 GiB allowed; Of the allocated memory 5.60 GiB is allocated by PyTorch, and 1.07 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",
+      "traceback": "Traceback (most recent call last):\n  File \"/home/libero_neto/phd-ufmg/claim-extractor/claim_runner/worker.py\", line 86, in run\n    model, tokenizer = load_model(job)\n  File \"/home/libero_neto/phd-ufmg/claim-extractor/runtimes/newsscope/run.py\", line 43, in load_model\n    model = PeftModel.from_pretrained(model, job['repositories'][0]['local_path'],\n  File \"/home/libero_neto/phd-models/venv/newsscope/lib/python3.10/site-packages/peft/peft_model.py\", line 568, in from_pretrained\n    load_result = model.load_adapter(\n  File \"/home/libero_neto/phd-models/venv/newsscope/lib/python3.10/site-packages/peft/peft_model.py\", line 1362, in load_adapter\n    adapters_weights = load_peft_weights(\n  File \"/home/libero_neto/phd-models/venv/newsscope/lib/python3.10/site-packages/peft/utils/save_and_load.py\", line 693, in load_peft_weights\n    adapters_weights = safe_load_file(filename, device=device)\n  File \"/home/libero_neto/phd-models/venv/newsscope/lib/python3.10/site-packages/safetensors/torch.py\", line 360, in load_file\n    return f.get_tensors()\ntorch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 MiB. GPU 0 has a total capacity of 7.78 GiB of which 1007.38 MiB is free. Including non-PyTorch memory, this process has 6.79 GiB memory in use. 6.67 GiB allowed; Of the allocated memory 5.60 GiB is allocated by PyTorch, and 1.07 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)\n"
+    }
+  ],
+  "output_valid_json": false,
+  "max_new_tokens": 2000,
+  "context_tokens": 131072,
+  "chunks_processed": 0
+}

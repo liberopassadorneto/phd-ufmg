@@ -33,11 +33,11 @@ def publish(root, alias, records):
     os.replace(temp, manifests / f'{alias}.json')
 
 
-def load(root, spec):
+def load(root, spec, *, verify_hashes=False):
     root = Path(root).resolve()
     path = root / 'manifests' / f'{spec.alias}.json'
     if not path.is_file():
-        raise RuntimeError(f'Missing prepared checkpoint for {spec.alias}; run prepare-models on Greenwich')
+        raise RuntimeError(f'Missing prepared checkpoint for {spec.alias}; run scripts/prepare-models.py --storage with the selected models')
     records = json.loads(path.read_text(encoding='utf-8'))
     expected = [spec.repo] + ([spec.base_repo] if spec.base_repo else [])
     if [r['repo'] for r in records] != expected or (spec.revision and records[0]['revision'] != spec.revision):
@@ -46,9 +46,11 @@ def load(root, spec):
         folder = (root / record['directory']).resolve()
         if not folder.is_relative_to(root) or not record['files']:
             raise ValueError('Invalid checkpoint directory or manifest')
-        for item in record['files']:
+        for item in record['files'] if verify_hashes else []:
             path = (folder / item['name']).resolve()
-            if not path.is_relative_to(folder) or not path.is_file() or path.stat().st_size != item['bytes'] or digest(path) != item['sha256']:
+            if not path.is_relative_to(folder) or not path.is_file() or path.stat().st_size != item['bytes']:
+                raise ValueError(f'Invalid prepared checkpoint file: {path}')
+            if verify_hashes and digest(path) != item['sha256']:
                 raise ValueError(f'Invalid prepared checkpoint file: {path}')
         record['local_path'] = str(folder)
     return records

@@ -114,6 +114,6 @@ def entrypoint(spec, load_model, prepare_chunks, infer):
     if internal.job:
         from .worker import run
         return run(internal.job, spec, load_model, prepare_chunks, infer)
-    from run_models import main
+    from scripts.run_models import main
     # Direct entrypoints delegate downloads/metrics to the same supervisor.
     return main(remaining, model_alias=spec.alias)
