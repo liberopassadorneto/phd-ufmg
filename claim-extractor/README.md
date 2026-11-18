@@ -1,5 +1,39 @@
 # Claim Extractor
 
+## Local execution on Cuba
+
+`--models all` excludes NewsScope on Cuba: its NF4 attempt exceeded the VRAM
+budget and RAM offload was too slow. Explicit `--models newsscope` remains
+available, with automatic RAM offload disabled.
+
+Prepare persistent weights, model cards and locked dependencies, then run the
+catalog sequentially without network access:
+
+```bash
+bash run-cuba.sh prepare --models all
+bash run-cuba.sh run --models all
+```
+
+Storage defaults to `~/phd-models`; override with `MODEL_STORAGE`. Results use
+a fresh timestamped directory under its `results/` folder. For one model, replace
+`all` in both commands with its alias. Local runs use the existing EN/PT input
+pair and the shared prompt for models requiring user instructions. Checkpoints
+and dependencies remain stored after each run. `inputs.json` freezes the processed
+transcripts; each model directory contains native `output.raw`/`output*.json`,
+`processing.json`, and per-attempt logs. Individual resource samples are not saved.
+`summary.json` is updated after each model with timings, average/peak VRAM/RAM, CPU
+average/peak percentages, CPU seconds, configured threads, and average/peak
+logical CPUs used (`vcpu_*_used`, CPU percentage divided by 100). Missing
+measurements remain null. This command runs all prepared models sequentially,
+continues after individual failures, and never overwrites previous runs:
+
+```bash
+bash run-cuba.sh run --models all
+```
+
+Checkpoints and dependencies remain stored after each run. `--checkpoints-only` preparation
+retains the legacy checkpoint-only workflow for Greenwich.
+
 ## Greenwich SSHFS (experimental)
 
 Prepare checkpoints on Greenwich (after `uv run hf auth login` for gated models):
@@ -12,7 +46,14 @@ uv run --frozen prepare-models.py --models babelscape-t5 --storage ~/phd-models
 Use `--models all` to prepare the catalog. On Cuba, after mounting Greenwich,
 pass `--offline --remote-storage ~/greenwich-models` to `run_models.py`.
 Offline refers to checkpoints: uv may still need network access to install the
-separate model environments. The manifest validates SHA-256 before loading.
+separate model environments. SHA-256 is checked during preparation only.
+Normal execution resolves the prepared manifest without scanning weight files,
+checking sizes or hashing. Weight validation is restricted to preparation.
+`run` does not launch CUDA/NF4 probes, compare dependency stamps, or impose a
+VRAM reserve. Libraries report loading/inference errors normally. Explicit
+`bash run-cuba.sh check --models all` retains runtime and CUDA/NF4 diagnostics.
+Metrics and logs are preserved. `--gpu-reserve-gib` is accepted for compatibility
+but has no effect.
 
 The optional `--remote-storage ~/greenwich-models` profile requires the exact
 Greenwich SSHFS mount. It stores per-model environments, checkpoints, caches,
@@ -229,7 +270,7 @@ PEFT does not automatically redistribute the base first; adapter autocasting is
 disabled and small runtime buffers stay materialized. Babelscape and SAGESSE
 include protobuf for tokenizer loading.
 
-Staging reserves 5 GiB of disk, 8 GiB of RAM and 1 GiB of VRAM by default.
+Staging reserves 5 GiB of disk and 8 GiB of RAM by default. No VRAM reserve is imposed.
 If weights do not fit on disk, the supervisor can use an existing tmpfs such as
 `/dev/shm`, accounting for loading memory as well. SAGESSE needs about 27 GiB of
 weight staging. No mount or system configuration is created.
@@ -266,6 +307,13 @@ Times are seconds, memory/storage are GiB. CPU 100% approximates one logical CPU
 core; it is not GPU utilization. VRAM is GPU process memory from NVML when
 available, otherwise explicitly identified PyTorch allocated memory. Sampling is
 once per second, so brief peaks may be missed. Tmpfs staging consumes system RAM.
+Storage size and filesystem free space are measured only at the start and end
+of each monitoring period. Storage peak fields are the maximum observed at those
+boundaries and can miss intermediate peaks; CPU, RAM and VRAM keep one-second
+sampling. Only running sums, counts and peaks are kept internally; individual
+observations are discarded. Averages are sample means across valid worker
+observations (including loading and all attempts), not energy consumption.
+Unavailable averages are null; VRAM averages require NVML process measurements.
 
 `success` means execution completed, not that the claims are correct. `partial`
 means generation exhausted its budget without a stop token. Invalid JSON alone

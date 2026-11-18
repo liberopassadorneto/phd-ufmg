@@ -91,7 +91,7 @@ class Monitor:
         self.known_processes = {}
         self.cpu_baseline = {}
         self.started = time.monotonic()
-        self.summary = {"sampling_interval_seconds": 1, "sample_count": 0,
+        self.summary = {"sampling_interval_seconds": 1, "storage_sampling": "start_and_end", "sample_count": 0,
                         "process_rss_peak_bytes": 0, "system_ram_used_peak_bytes": 0,
                         "system_ram_available_min_bytes": None, "system_swap_used_peak_bytes": 0,
                         "process_cpu_percent_peak": 0.0, "process_cpu_percent_mean": None,
@@ -99,7 +99,9 @@ class Monitor:
                         "gpu_process_vram_peak_bytes": None, "gpu_device_vram_peak_bytes": None,
                         "gpu_device_utilization_peak_percent": None, "staging_peak_bytes": 0,
                         "filesystem_free_min_bytes": None, "unavailable": []}
-        self.cpu_samples = []
+        # Running sums/counts only: individual observations are never retained.
+        self.means = {"process_cpu_percent": [0.0, 0], "process_rss": [0.0, 0],
+                      "gpu_process_vram": [0.0, 0]}
         self.nvml = None
         self.gpu = None
         try:
@@ -127,7 +129,7 @@ class Monitor:
             except (self.psutil.NoSuchProcess, self.psutil.AccessDenied):
                 pass
 
-    def _sample(self):
+    def _sample(self, include_storage=False):
         psutil = self.psutil
         vm = psutil.virtual_memory()
         row = {"elapsed_seconds": time.monotonic() - self.started, "phase": self.phase,
@@ -183,9 +185,12 @@ class Monitor:
                 reason = f"NVML sample: {type(exc).__name__}: {exc}"
                 if reason not in self.summary["unavailable"]:
                     self.summary["unavailable"].append(reason)
-        row["staging_bytes"] = directory_size(self.staging) if self.staging else 0
-        storage = self.staging if self.staging and self.staging.exists() else self.output.parent
-        row["filesystem_free_bytes"] = shutil.disk_usage(storage).free
+        row["staging_bytes"] = None
+        row["filesystem_free_bytes"] = None
+        if include_storage:
+            row["staging_bytes"] = directory_size(self.staging) if self.staging else 0
+            storage = self.staging if self.staging and self.staging.exists() else self.output.parent
+            row["filesystem_free_bytes"] = shutil.disk_usage(storage).free
         return row
 
     def _record(self, row):
@@ -205,22 +210,34 @@ class Monitor:
                 s[dest] = max(s[dest] or 0, row[source])
         for dest, source in (("system_ram_available_min_bytes", "system_ram_available_bytes"),
                              ("filesystem_free_min_bytes", "filesystem_free_bytes")):
-            s[dest] = row[source] if s[dest] is None else min(s[dest], row[source])
-        if row["process_cpu_percent"] is not None:
-            self.cpu_samples.append(row["process_cpu_percent"])
+            if row[source] is not None:
+                s[dest] = row[source] if s[dest] is None else min(s[dest], row[source])
+        observations = {"process_cpu_percent": row["process_cpu_percent"],
+                        "process_rss": row["process_rss_bytes"] if row["process_cpu_seconds"] is not None else None,
+                        "gpu_process_vram": row["gpu_process_vram_bytes"]}
+        for name, value in observations.items():
+            if value is not None:
+                accumulator = self.means[name]
+                accumulator[0] += value
+                accumulator[1] += 1
+                suffix = "_mean" if name == "process_cpu_percent" else "_mean_bytes"
+                s[name + suffix] = accumulator[0] / accumulator[1]
+                s[name + "_samples"] = accumulator[1]
         s["process_cpu_seconds"] = max(s["process_cpu_seconds"], row["process_cpu_seconds"] or 0)
 
     def _loop(self):
+        first = True
         while True:
             try:
-                self._record(self._sample())
+                self._record(self._sample(include_storage=first))
             except Exception as exc:
                 reason = f"Resource sampling: {type(exc).__name__}: {exc}"
                 if reason not in self.summary["unavailable"]:
                     self.summary["unavailable"].append(reason)
+            first = False
             if self.stop_event.wait(1):
                 try:
-                    self._record(self._sample())
+                    self._record(self._sample(include_storage=True))
                 except Exception:
                     pass
                 break
@@ -228,8 +245,6 @@ class Monitor:
     def stop(self):
         self.stop_event.set()
         self.thread.join()
-        if self.cpu_samples:
-            self.summary["process_cpu_percent_mean"] = sum(self.cpu_samples) / len(self.cpu_samples)
         if self.nvml:
             self.nvml.nvmlShutdown()
         if self.summary["process_cpu_percent_mean"] is None:

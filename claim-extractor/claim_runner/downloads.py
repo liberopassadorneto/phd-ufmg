@@ -2,6 +2,7 @@
 
 import os
 import hashlib
+import shutil
 from pathlib import Path, PurePosixPath
 
 
@@ -44,7 +45,7 @@ def repository_manifest(repo: str, revision: str | None = None) -> dict:
         "download_bytes": sum(sizes[name] for name in files)}
 
 
-def download_repositories(manifests: list[dict], staging: Path) -> list[dict]:
+def download_repositories(manifests: list[dict], staging: Path, reserve_bytes: int = 0) -> list[dict]:
     os.environ["HF_HUB_DISABLE_XET"] = "1"
     os.environ["HF_XET_CACHE"] = str(staging / "xet")
     from huggingface_hub import hf_hub_download
@@ -55,6 +56,10 @@ def download_repositories(manifests: list[dict], staging: Path) -> list[dict]:
         folder = Path(persistent) / key if persistent else staging / f"repository-{index}"
         folder.mkdir(parents=True, exist_ok=True)
         for file in manifest["files"]:
+            existing = folder / file["name"]
+            if not existing.is_file() or existing.stat().st_size != file["bytes"]:
+                if shutil.disk_usage(folder).free < file["bytes"] + reserve_bytes:
+                    raise RuntimeError("Insufficient disk for checkpoint file plus reserve")
             print(f"Downloading {manifest['repo']} / {file['name']}", flush=True)
             path = Path(hf_hub_download(manifest["repo"], file["name"],
                                        revision=manifest["revision"], local_dir=folder,

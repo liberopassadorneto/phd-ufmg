@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import platform
@@ -20,6 +21,7 @@ from claim_runner.catalog import MODELS, select_models
 from claim_runner.downloads import download_repositories, repository_manifest
 from claim_runner.prepared import load as load_prepared
 from claim_runner.inputs import read_transcript
+from claim_runner.storage import configure, verify_runtime
 from claim_runner.outputs import export_result
 from claim_runner.resources import (GIB, Monitor, choose_staging, cleanup_staging,
                                     create_staging, directory_size, write_json)
@@ -42,8 +44,9 @@ def parse_args(argv=None, model_alias=None):
     parser.add_argument("--parent-comment-file", type=Path, help="Optional SAGESSE parent comment context")
     parser.add_argument("--output-dir", type=Path, help="Results root; defaults to each model's DEFAULT_OUTPUT")
     parser.add_argument("--staging-dir", type=Path, default=ROOT / ".model-staging")
+    parser.add_argument("--storage", type=Path, help="Persistent local checkpoints, dependencies, caches and results")
     parser.add_argument("--remote-storage", type=Path, help="SSHFS mount for persistent checkpoints, environments and results")
-    parser.add_argument("--offline", action="store_true", help="Use only checkpoints prepared on Greenwich")
+    parser.add_argument("--offline", action="store_true", help="Use prepared checkpoints; local storage also requires prepared dependencies")
     parser.add_argument("--ram-staging-dir", type=Path, default=Path("/dev/shm"))
     parser.add_argument("--runtime-dir", type=Path, default=ROOT / "runtimes")
     parser.add_argument("--python", default=f"{sys.version_info.major}.{sys.version_info.minor}" if model_alias else "3.10",
@@ -52,7 +55,8 @@ def parse_args(argv=None, model_alias=None):
     parser.add_argument("--no-offload-fallback", action="store_true")
     parser.add_argument("--disk-reserve-gib", type=float, default=5)
     parser.add_argument("--ram-reserve-gib", type=float, default=8)
-    parser.add_argument("--gpu-reserve-gib", type=float, default=1)
+    parser.add_argument("--gpu-reserve-gib", type=float, default=0,
+                        help="Deprecated compatibility option; no VRAM reserve is enforced")
     parser.add_argument("--context-tokens", type=int,
                         help="Explicit context ceiling; default comes from the model/tokenizer")
     limits = parser.add_mutually_exclusive_group()
@@ -63,6 +67,10 @@ def parse_args(argv=None, model_alias=None):
     parser.add_argument("--model-timeout", type=float, default=0,
                         help="Seconds per worker attempt; 0 disables timeout")
     args = parser.parse_args(argv)
+    if args.storage and args.remote_storage:
+        parser.error("--storage and --remote-storage are mutually exclusive")
+    if args.offline and not (args.storage or args.remote_storage):
+        parser.error("--offline requires --storage or --remote-storage")
     for name in ("disk_reserve_gib", "ram_reserve_gib", "gpu_reserve_gib", "model_timeout"):
         if getattr(args, name) < 0:
             parser.error(f"--{name.replace('_', '-')} must be nonnegative")
@@ -161,8 +169,11 @@ def worker_command(args, spec, *extra):
 
 def runtime_environment(args, spec):
     env = os.environ.copy()
-    if args.remote_storage:
-        env['UV_PROJECT_ENVIRONMENT'] = str(args.remote_storage / 'venv' / spec.runtime)
+    storage = args.storage or args.remote_storage
+    if storage:
+        env['UV_PROJECT_ENVIRONMENT'] = str(storage / 'venv' / spec.runtime)
+    if args.storage and args.offline:
+        env.update(UV_OFFLINE='1', UV_PYTHON_DOWNLOADS='never', CLAIM_OFFLINE='1')
     return env
 
 
@@ -170,28 +181,25 @@ def ensure_runtime(args, spec, run_dir, cache):
     if spec.runtime not in cache:
         folder = run_dir / "preflight" / spec.runtime
         project = args.runtime_dir / spec.runtime
-        if not (project / "run.py").is_file():
-            raise RuntimeError(f"Missing model executor: {project / 'run.py'}")
-        if not (project / "uv.lock").is_file():
-            raise RuntimeError(f"Missing runtime lock: {project / 'uv.lock'}")
         environment = runtime_environment(args, spec)
-        env_path = Path(environment.get('UV_PROJECT_ENVIRONMENT', project / '.venv'))
-        additional_budget = 0 if (env_path / "pyvenv.cfg").is_file() else 4 * GIB
-        if shutil.disk_usage(args.remote_storage or project).free < args.disk_reserve_gib * GIB + additional_budget:
-            raise RuntimeError("Insufficient disk for uv runtime setup plus reserve; relocate --runtime-dir")
-        print(f"Preparing uv runtime: {spec.runtime}", flush=True)
-        setup = command_record(["uv", "sync", "--frozen", "--project", str(project.resolve()),
+        prepared = args.storage and args.offline
+        if args.check and prepared:
+            verify_runtime(args.storage, spec, project, args.python)
+        print(f"{'Using prepared runtime' if prepared else 'Preparing uv runtime'}: {spec.runtime}", flush=True)
+        setup = {"returncode": 0, "prepared": True} if args.storage and args.offline else command_record(["uv", "sync", "--frozen", "--project", str(project.resolve()),
                                 "--python", args.python], folder / "setup", env=environment)
         if setup["returncode"] != 0:
             raise RuntimeError(f"Runtime setup failed; see {folder / 'setup/process.log'}")
-        probe_dir = folder / "cuda"
-        probe_dir.mkdir(parents=True, exist_ok=True)
-        cuda = command_record(worker_command(args, spec, "--probe", probe_dir / "cuda.json"),
-                              probe_dir, timeout=120, env=environment)
-        cache[spec.runtime] = {"setup": setup, "cuda": cuda, "folder": str(folder)}
+        cache[spec.runtime] = {"setup": setup, "folder": str(folder)}
     state = cache[spec.runtime]
-    if state["cuda"]["returncode"] != 0:
-        raise RuntimeError(f"CUDA/FP16 preflight failed; see {state['folder']}/cuda/process.log")
+    if args.check:
+        if "cuda" not in state:
+            probe_dir = Path(state["folder"]) / "cuda"
+            probe_dir.mkdir(parents=True, exist_ok=True)
+            state["cuda"] = command_record(worker_command(args, spec, "--probe", probe_dir / "cuda.json"),
+                                           probe_dir, timeout=120, env=runtime_environment(args, spec))
+        if state["cuda"]["returncode"] != 0:
+            raise RuntimeError(f"CUDA/FP16 preflight failed; see {state['folder']}/cuda/process.log")
     return state
 
 
@@ -222,7 +230,7 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
     started = time.perf_counter()
     owner = uuid.uuid4().hex
     staging = parent = None
-    record = {"alias": spec.alias, "model": spec.record(), "status": "failed", "attempts": [],
+    record = {"cpu_threads": args.cpu_threads, "alias": spec.alias, "model": spec.record(), "status": "failed", "attempts": [],
               "download_seconds": 0.0, "cleanup_seconds": 0.0}
     record["configuration"] = {
         "sources": spec.sources, "declared_generation": spec.generation,
@@ -241,27 +249,29 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
         return record
     try:
         preflight_started = time.perf_counter()
-        state = ensure_runtime(args, spec, run_dir, runtimes)
+        ensure_runtime(args, spec, run_dir, runtimes)
         mode = spec.precision if args.precision == "auto" else args.precision
         if not spec.causal and mode == "nf4":
             raise ValueError("NF4 override is supported only for the causal language models")
-        if mode == "nf4" and not ensure_quantization(args, spec, state):
-            record["quantization_preflight_failed"] = True
-            if args.no_offload_fallback or not spec.hardware_configuration.get("offload_fallback", True):
-                raise RuntimeError("NF4 CUDA probe failed and offload fallback is disabled")
-            mode = "offload"
         record["preflight_seconds"] = time.perf_counter() - preflight_started
-        if args.offline:
-            if not args.remote_storage:
-                raise ValueError('--offline requires --remote-storage')
-            manifests = load_prepared(args.remote_storage, spec)
+        persistent_ready = False
+        if args.storage and not args.offline:
+            try:
+                manifests = load_prepared(args.storage, spec)
+                persistent_ready = True
+            except (FileNotFoundError, RuntimeError):
+                pass
+        if args.offline or persistent_ready:
+            verification_started = time.perf_counter()
+            manifests = load_prepared(args.storage or args.remote_storage, spec)
+            record['checkpoint_verification_seconds'] = time.perf_counter() - verification_started
         else:
             manifests = [repository_manifest(spec.repo, spec.revision)]
             if spec.base_repo:
                 manifests.append(repository_manifest(spec.base_repo))
         record["configuration"]["repositories"] = [
             {"repo": manifest["repo"], "revision": manifest["revision"]} for manifest in manifests]
-        download_bytes = 0 if args.offline else sum(m["download_bytes"] for m in manifests)
+        download_bytes = 0 if args.offline or persistent_ready else sum(m["download_bytes"] for m in manifests)
         # Include CPU loading/conversion buffers and room for a fallback attempt.
         memory_bytes = int(spec.parameters_b * 1e9 * 2 * 1.35) + 3 * GIB
         parent, storage_kind = choose_staging(download_bytes, memory_bytes, args.staging_dir.resolve(),
@@ -276,7 +286,12 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
         monitor.phase = "download"
         monitor.attach(os.getpid())
         try:
-            repositories = manifests if args.offline else download_repositories(manifests, staging)
+            repositories = manifests if args.offline or persistent_ready else download_repositories(
+                manifests, staging, reserve_bytes=int(args.disk_reserve_gib * GIB))
+            if args.storage and not args.offline and not persistent_ready:
+                from claim_runner.prepared import publish
+                publish(args.storage, spec.alias, repositories)
+            record["persistent_checkpoints"] = bool(args.storage or args.remote_storage)
         finally:
             record["download_seconds"] = time.perf_counter() - before
             record["download_resources"] = monitor.stop()
@@ -297,7 +312,6 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
                 "spec": spec.record(), "repositories": repositories, "mode": mode,
                 "input": inputs[spec.alias], "aps_input": aps, "output": str(attempt_dir.resolve()),
                 "seed": args.seed, "cpu_threads": args.cpu_threads,
-                "gpu_reserve_bytes": int(args.gpu_reserve_gib * GIB),
                 "context_tokens": args.context_tokens, "max_new_tokens": args.max_new_tokens,
                 "max_length": args.max_length, **args.prompts.get(spec.alias, {}),
                 **(args.context_files if spec.alias == "sagesse-mistral" else {})})
@@ -353,10 +367,20 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
 
 def main(argv=None, model_alias=None):
     args = parse_args(argv, model_alias=model_alias)
+    if args.storage:
+        for spec in args.selected:
+            if spec.requires_prompt and spec.alias not in args.prompts:
+                prompt = ROOT / "prompts/shared-zero-shot-v2.md"
+                args.prompts[spec.alias] = {"prompt": prompt.read_text(), "prompt_file": str(prompt)}
     if args.list_models:
         for spec in MODELS:
             print(f"{spec.alias:24} {spec.repo} [{spec.precision}; {spec.language}; {spec.task}]")
         return 0
+    if args.storage:
+        args.storage = configure(args.storage)
+        args.staging_dir = args.storage / "tmp"
+        args.ram_staging_dir = args.storage / "tmp" / ".disabled-ram-fallback"
+        args.output_dir = args.output_dir or args.storage / "results" / (time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8])
     if args.remote_storage:
         root = args.remote_storage.expanduser().absolute()
         check = subprocess.run(['findmnt', '-n', '-o', 'FSTYPE,TARGET,SOURCE', '--mountpoint', str(root)], capture_output=True, text=True)
@@ -386,6 +410,10 @@ def main(argv=None, model_alias=None):
     inputs, aps = prepare_inputs(args)
     if args.output_dir is not None:
         args.output_dir.mkdir(parents=True, exist_ok=True)
+    if args.storage and not args.check:
+        if any(args.output_dir.iterdir()):
+            raise RuntimeError("Results directory is not empty; choose a fresh --output-dir")
+        write_json(args.output_dir / "inputs.json", inputs)
     args.staging_dir.mkdir(parents=True, exist_ok=True)
     records = []
     # Worker communication and runtime probes live only in this temporary directory.
@@ -409,9 +437,17 @@ def main(argv=None, model_alias=None):
             if destination.exists() and any(destination.iterdir()):
                 raise RuntimeError(f"Results already exist in {destination}. Use another --output-dir to keep both runs.")
             destination.mkdir(parents=True, exist_ok=True)
-            record = run_one(args, spec, run_dir, inputs, aps, runtimes)
+            model_args = copy.copy(args)
+            if args.storage and spec.alias == "babelscape-t5" and args.context_tokens is None:
+                model_args.context_tokens = 512
+            record = run_one(model_args, spec, run_dir, inputs, aps, runtimes)
             export_result(record, destination)
             records.append(record)
+            if args.storage:
+                summary = [{"alias": item["alias"], **json.loads(
+                    (args.output_dir / item["alias"] / "processing.json").read_text())}
+                    for item in records]
+                write_json(args.output_dir / "summary.json", summary)
             print(f"Output and processing: {destination}", flush=True)
             if record["status"] == "interrupted" or record.get("cleanup_error"):
                 break

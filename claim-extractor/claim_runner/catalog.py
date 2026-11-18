@@ -27,7 +27,9 @@ MODELS = tuple(model_module(alias).SPEC for alias in ALIASES)
 def select_models(value):
     keys = [part.strip() for part in value.split(',')]
     if keys == ['all']:
-        return list(MODELS)
+        # Exceeds Cuba's VRAM budget and CPU offload is too slow for this run set.
+        # Retain the alias for explicit execution on other hardware.
+        return [model for model in MODELS if model.alias != 'newsscope']
     mapping = {key: model for model in MODELS for key in (model.alias, model.repo)}
     selected = []
     for key in keys:
