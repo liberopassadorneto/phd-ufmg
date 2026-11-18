@@ -39,6 +39,10 @@ class _SilentLogger:
         pass
 
 
+class ForeignLanguageError(Exception):
+    """Vídeo cujo idioma, segundo os metadados, não é português."""
+
+
 def check_subtitles_availability(video_id, proxy=None, cookiefile=None):
     """
     Verifica quais tipos de legenda em português (manual e/ou automática)
@@ -145,6 +149,26 @@ def download_media(
     )
     temp_cookie_path = prepare_cookies_file(cookies_dir)
 
+    detected = {}
+
+    def language_filter(info, *, incomplete):
+        """
+        Usa o 'language' da própria extração do yt-dlp (sem chamada extra).
+        Retornar uma mensagem faz o yt-dlp pular o download desse vídeo.
+        """
+        language = (info.get("language") or "").lower()
+        if language and not language.startswith("pt"):
+            detected["language"] = language
+            return f"idioma {language}"
+        return None
+
+    def run_phase(options):
+        """Executa uma etapa do yt-dlp e interrompe se o vídeo não for em pt."""
+        with yt_dlp.YoutubeDL(options) as ydl:
+            ydl.download([url])
+        if "language" in detected:
+            raise ForeignLanguageError(detected["language"])
+
     base_ydl_opts = {
         "outtmpl": f"{base_dir}/%(id)s.%(ext)s",
         "quiet": True,
@@ -156,6 +180,7 @@ def download_media(
         "remote_components": "ejs:github",
         "retries": 2,
         "socket_timeout": 15,
+        "match_filter": language_filter,
     }
 
     if target_proxy:
@@ -175,8 +200,7 @@ def download_media(
                 "subtitleslangs": ["pt"],
                 "subtitlesformat": "srt",
             })
-            with yt_dlp.YoutubeDL(sub_options) as ydl:
-                ydl.download([url])
+            run_phase(sub_options)
             _organize_subtitle_files(base_dir, video_id, subs_status)
 
     # Thumbnail
@@ -186,8 +210,7 @@ def download_media(
             "skip_download": True,
             "writethumbnail": True,
         })
-        with yt_dlp.YoutubeDL(thumb_options) as ydl:
-            ydl.download([url])
+        run_phase(thumb_options)
 
     # Áudio
     if download_audio:
@@ -200,8 +223,7 @@ def download_media(
                 "preferredquality": "192",
             }],
         })
-        with yt_dlp.YoutubeDL(audio_options) as ydl:
-            ydl.download([url])
+        run_phase(audio_options)
 
     # Vídeo base -> frames
     if download_frames:
@@ -209,8 +231,7 @@ def download_media(
         video_options.update({
             "format": "bv/bestvideo/b",
         })
-        with yt_dlp.YoutubeDL(video_options) as ydl:
-            ydl.download([url])
+        run_phase(video_options)
 
 
 def extract_frames(video_id, output_dir="output", target_fps="1/10"):
@@ -263,7 +284,7 @@ def process_video(
     proxy_list=None,
 ):
     """Função orquestradora que retorna 'SUCCESS', 'UNAVAILABLE', 'AGE_RESTRICTED',
-    'RATE_LIMIT_429', 'BOT_BLOCK', 'SESSION_BLOCK' ou 'ERROR'."""
+    'FOREIGN_LANGUAGE', 'RATE_LIMIT_429', 'BOT_BLOCK', 'SESSION_BLOCK' ou 'ERROR'."""
     global current_proxy_index
     current_proxy_index = load_proxy_index(cookies_dir)
     last_status = "BOT_BLOCK"
@@ -294,6 +315,11 @@ def process_video(
             if download_frames:
                 extract_frames(video_id, output_dir)
             return "SUCCESS"
+
+        except ForeignLanguageError as e:
+            shutil.rmtree(f"{output_dir}/{video_id}", ignore_errors=True)
+            print(f"[{video_id}] Video fora do idioma pt ({e}). Pulando...")
+            return "FOREIGN_LANGUAGE"
 
         except Exception as e:
             error_str = str(e).lower()
@@ -493,5 +519,7 @@ if __name__ == "__main__":
         sys.exit(4)
     elif status == "RATE_LIMIT_429":
         sys.exit(5)
+    elif status == "FOREIGN_LANGUAGE":
+        sys.exit(6)
     elif status != "SUCCESS":
         sys.exit(1)
