@@ -43,6 +43,6 @@ def verify_runtime(root, spec, project, python):
     stamp = runtime_stamp(root, spec)
     env = Path(root) / 'venv' / spec.runtime
     if not (env / 'bin/python').exists() or not stamp.is_file():
-        raise RuntimeError(f'Missing prepared runtime for {spec.alias}; run prepare-models.py')
+        raise RuntimeError(f'Missing prepared runtime for {spec.alias}; run scripts/prepare-models.py')
     if json.loads(stamp.read_text()) != runtime_identity(project, python):
-        raise RuntimeError(f'Prepared runtime changed for {spec.alias}; rerun prepare-models.py')
+        raise RuntimeError(f'Prepared runtime changed for {spec.alias}; rerun scripts/prepare-models.py')

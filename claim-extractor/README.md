@@ -34,6 +34,13 @@ bash run-cuba.sh run --models all
 Checkpoints and dependencies remain stored after each run. `--checkpoints-only` preparation
 prepares weights and cards without installing per-model dependencies.
 
+## CLI scripts
+
+`run-cuba.sh` invokes `scripts/prepare-models.py` for preparation and
+`scripts/run_models.py` for sequential execution. Both support `--help`.
+`claim_runner/` contains shared library code; `runtimes/<model>/run.py` remains
+the per-model executor and also supports direct CLI execution.
+
 ## Transcript inputs
 
 Store input transcripts in `inputs/`. Use subdirectories per dataset or video as
@@ -94,10 +101,10 @@ The supervisor retains the existing model selection interface:
 ```bash
 uv sync --frozen
 uv run --frozen hf auth login
-uv run --frozen run_models.py --list-models
-uv run --frozen run_models.py --models gemma-2b-aps,detective-qwen3b \
+uv run --frozen scripts/run_models.py --list-models
+uv run --frozen scripts/run_models.py --models gemma-2b-aps,detective-qwen3b \
   --output-dir results/author-protocol
-uv run --frozen run_models.py --models all \
+uv run --frozen scripts/run_models.py --models all \
   --output-dir results/author-protocol-all
 ```
 
@@ -204,7 +211,7 @@ uv run --frozen --project runtimes/dongyru-mistral \
   runtimes/dongyru-mistral/run.py --prompt-file /path/to/your-prompt.md \
   --output-dir results/user-prompt
 
-uv run --frozen run_models.py --models all \
+uv run --frozen scripts/run_models.py --models all \
   --prompt-file dongyru-mistral=/path/to/dongyru-prompt.md \
   --prompt-file mistral-instruct-v02=/path/to/mistral-prompt.md \
   --output-dir results/all-with-user-prompts

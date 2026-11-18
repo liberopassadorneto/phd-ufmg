@@ -10,13 +10,13 @@ mode="${1:-run}"
 if (( $# )); then shift; fi
 case "$mode" in
   prepare)
-    uv run --frozen --python 3.10 prepare-models.py --storage "$root" "$@"
+    uv run --frozen --python 3.10 scripts/prepare-models.py --storage "$root" "$@"
     ;;
   run|check)
     export UV_OFFLINE=1 UV_PYTHON_DOWNLOADS=never
     args=()
     [[ "$mode" == check ]] && args+=(--check)
-    uv run --frozen --no-sync --python 3.10 run_models.py \
+    uv run --frozen --no-sync --python 3.10 scripts/run_models.py \
       --storage "$root" --offline --model-timeout "${MODEL_TIMEOUT_SECONDS:-7200}" \
       "${args[@]}" "$@"
     ;;

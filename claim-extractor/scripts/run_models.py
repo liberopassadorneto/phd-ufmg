@@ -17,6 +17,9 @@ import tempfile
 import uuid
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
 from claim_runner.catalog import MODELS, select_models
 from claim_runner.downloads import download_repositories, repository_manifest
 from claim_runner.prepared import load as load_prepared
@@ -26,7 +29,6 @@ from claim_runner.outputs import export_result
 from claim_runner.resources import (GIB, Monitor, choose_staging, cleanup_staging,
                                     create_staging, directory_size, write_json)
 
-ROOT = Path(__file__).resolve().parent
 
 
 def parse_args(argv=None, model_alias=None):
@@ -77,7 +79,7 @@ def parse_args(argv=None, model_alias=None):
     except ValueError as exc:
         parser.error(str(exc))
     if model_alias and [spec.alias for spec in args.selected] != [model_alias]:
-        parser.error("A model's run.py executes only that model; use run_models.py for a sequence")
+        parser.error("A model's run.py executes only that model; use scripts/run_models.py for a sequence")
     if model_alias and args.python != f"{sys.version_info.major}.{sys.version_info.minor}":
         parser.error("Select the interpreter with uv run --python before run.py, rather than replacing its active environment")
     args.prompts = {}

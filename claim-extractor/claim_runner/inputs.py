@@ -68,7 +68,7 @@ def make_aps(english: str, data_dir: Path) -> dict:
         sentences = nltk.sent_tokenize(english, language="english")
     except LookupError:
         if os.environ.get("CLAIM_OFFLINE") == "1":
-            raise RuntimeError("Missing prepared NLTK punkt_tab; rerun prepare-models.py")
+            raise RuntimeError("Missing prepared NLTK punkt_tab; rerun scripts/prepare-models.py")
         if not nltk.download("punkt_tab", download_dir=str(data_dir), quiet=True):
             raise RuntimeError("Could not download NLTK punkt_tab for custom APS input")
         sentences = nltk.sent_tokenize(english, language="english")

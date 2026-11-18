@@ -37,7 +37,7 @@ def load(root, spec, *, verify_hashes=False):
     root = Path(root).resolve()
     path = root / 'manifests' / f'{spec.alias}.json'
     if not path.is_file():
-        raise RuntimeError(f'Missing prepared checkpoint for {spec.alias}; run prepare-models.py --storage with the selected models')
+        raise RuntimeError(f'Missing prepared checkpoint for {spec.alias}; run scripts/prepare-models.py --storage with the selected models')
     records = json.loads(path.read_text(encoding='utf-8'))
     expected = [spec.repo] + ([spec.base_repo] if spec.base_repo else [])
     if [r['repo'] for r in records] != expected or (spec.revision and records[0]['revision'] != spec.revision):
