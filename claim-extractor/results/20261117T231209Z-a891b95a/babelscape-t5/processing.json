@@ -1,0 +1,73 @@
+{
+  "model": "Babelscape/t5-base-summarization-claim-extractor",
+  "status": "success",
+  "precision": "fp32",
+  "gpu": "NVIDIA GeForce RTX 2080",
+  "inference_seconds": 9.58,
+  "loading_seconds": 13.64,
+  "preflight_seconds": 9.825,
+  "checkpoint_verification_seconds": 8.486,
+  "download_seconds": 0.627,
+  "total_seconds": 47.327,
+  "vram_peak_gib": 1.273,
+  "vram_measurement": "NVML process memory",
+  "ram_peak_gib": 1.454,
+  "cpu_logical_count": 16,
+  "cpu_available_logical_count": 16,
+  "cpu_threads_configured": 8,
+  "vcpu_average_used": 0.798,
+  "vcpu_peak_used": 1.618,
+  "resource_sampling_interval_seconds": 1,
+  "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+  "resource_measurement_unavailable": [],
+  "cpu_average_percent": 79.84,
+  "cpu_peak_percent": 161.8,
+  "cpu_seconds": 22.873,
+  "temporary_storage_peak_gib": 0.0,
+  "temporary_storage_location": "disk",
+  "persistent_checkpoints": true,
+  "temporary_weights_removed": true,
+  "output_bytes": 938,
+  "configuration": {
+    "sources": {
+      "model_card": "https://huggingface.co/Babelscape/t5-base-summarization-claim-extractor",
+      "repository": "https://github.com/Babelscape/FENICE"
+    },
+    "generation": {
+      "max_length": 250,
+      "min_length": 2,
+      "num_beams": 5,
+      "pad_token_id": 0,
+      "eos_token_id": 1,
+      "decoder_start_token_id": 0,
+      "transformers_version": "4.57.6",
+      "max_new_tokens": null,
+      "do_sample": false
+    },
+    "input": {
+      "preparation": "text",
+      "language": "en",
+      "domain_adaptation": "video transcript supplied directly; no summarizer"
+    },
+    "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+    "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+    "input_partitioned": false,
+    "repositories": [
+      {
+        "repo": "Babelscape/t5-base-summarization-claim-extractor",
+        "revision": "94775fb1c8dc2c3ef1bfec413f9f961e6ba5a1c8"
+      }
+    ],
+    "hardware": {
+      "precision": "fp32",
+      "offload_fallback": true,
+      "selected_precision": "fp32",
+      "selected_dtype": "float32"
+    },
+    "overrides": {
+      "context_tokens": 512
+    }
+  },
+  "context_tokens": 512,
+  "chunks_processed": 1
+}

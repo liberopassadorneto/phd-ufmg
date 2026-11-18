@@ -1,0 +1,70 @@
+{
+  "model": "google/gemma-2b-aps-it",
+  "status": "success",
+  "precision": "fp16",
+  "gpu": "NVIDIA GeForce RTX 2080",
+  "inference_seconds": 44.279,
+  "loading_seconds": 19.419,
+  "preflight_seconds": 29.889,
+  "checkpoint_verification_seconds": 45.422,
+  "download_seconds": 0.62,
+  "total_seconds": 145.962,
+  "vram_peak_gib": 4.936,
+  "vram_measurement": "NVML process memory",
+  "ram_peak_gib": 5.339,
+  "cpu_logical_count": 16,
+  "cpu_available_logical_count": 16,
+  "cpu_threads_configured": 8,
+  "vcpu_average_used": 0.862,
+  "vcpu_peak_used": 1.705,
+  "resource_sampling_interval_seconds": 1,
+  "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+  "resource_measurement_unavailable": [],
+  "cpu_average_percent": 86.17,
+  "cpu_peak_percent": 170.5,
+  "cpu_seconds": 60.361,
+  "temporary_storage_peak_gib": 0.0,
+  "temporary_storage_location": "disk",
+  "persistent_checkpoints": true,
+  "temporary_weights_removed": true,
+  "output_bytes": 3056,
+  "configuration": {
+    "sources": {
+      "model_card": "https://huggingface.co/google/gemma-2b-aps-it"
+    },
+    "generation": {
+      "max_new_tokens": 4096,
+      "pad_token_id": 0,
+      "bos_token_id": 2,
+      "eos_token_id": 1,
+      "_from_model_config": true,
+      "transformers_version": "4.57.6",
+      "max_length": 20,
+      "do_sample": false
+    },
+    "input": {
+      "preparation": "NLTK sentence markers; whole passage when it fits",
+      "language": "en",
+      "frozen_jsonl": "only when --aps-input is supplied"
+    },
+    "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+    "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+    "input_partitioned": false,
+    "repositories": [
+      {
+        "repo": "google/gemma-2b-aps-it",
+        "revision": "6526315a71d38bfbde56357466ddcc27629cfd78"
+      }
+    ],
+    "hardware": {
+      "precision": "fp16",
+      "offload_fallback": true,
+      "selected_precision": "fp16",
+      "selected_dtype": "float16"
+    },
+    "overrides": {}
+  },
+  "max_new_tokens": 4096,
+  "context_tokens": 8192,
+  "chunks_processed": 1
+}

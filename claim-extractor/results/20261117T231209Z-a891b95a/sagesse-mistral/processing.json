@@ -1,0 +1,72 @@
+{
+  "model": "SAGESSE-EPFL/Mistral-7b-claims-extraction",
+  "status": "partial",
+  "precision": "nf4",
+  "gpu": "NVIDIA GeForce RTX 2080",
+  "inference_seconds": 5.038,
+  "loading_seconds": 137.367,
+  "preflight_seconds": 21.31,
+  "checkpoint_verification_seconds": 329.132,
+  "download_seconds": 0.644,
+  "total_seconds": 504.396,
+  "vram_peak_gib": 4.668,
+  "vram_measurement": "NVML process memory",
+  "ram_peak_gib": 5.738,
+  "cpu_logical_count": 16,
+  "cpu_available_logical_count": 16,
+  "cpu_threads_configured": 8,
+  "vcpu_average_used": 0.37,
+  "vcpu_peak_used": 1.003,
+  "resource_sampling_interval_seconds": 1,
+  "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+  "resource_measurement_unavailable": [],
+  "cpu_average_percent": 37.02,
+  "cpu_peak_percent": 100.3,
+  "cpu_seconds": 56.503,
+  "temporary_storage_peak_gib": 0.0,
+  "temporary_storage_location": "disk",
+  "persistent_checkpoints": true,
+  "temporary_weights_removed": true,
+  "output_bytes": 65,
+  "warning": "Model output reached the generation limit and is incomplete; preserved without repair.",
+  "configuration": {
+    "sources": {
+      "model_card": "https://huggingface.co/SAGESSE-EPFL/Mistral-7b-claims-extraction"
+    },
+    "generation": {
+      "bos_token_id": 1,
+      "eos_token_id": 2,
+      "_from_model_config": true,
+      "transformers_version": "4.57.6",
+      "max_length": 20,
+      "max_new_tokens": null,
+      "do_sample": false
+    },
+    "input": {
+      "preparation": "published README template",
+      "language": "en",
+      "submission": "",
+      "parent_comment": "",
+      "domain_adaptation": "video transcript supplied as comment"
+    },
+    "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+    "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+    "input_partitioned": false,
+    "repositories": [
+      {
+        "repo": "SAGESSE-EPFL/Mistral-7b-claims-extraction",
+        "revision": "50338abc973e34741575124531465d65589b4023"
+      }
+    ],
+    "hardware": {
+      "precision": "nf4",
+      "offload_fallback": true,
+      "selected_precision": "nf4",
+      "selected_dtype": "float16"
+    },
+    "overrides": {}
+  },
+  "output_valid_json": false,
+  "context_tokens": 32768,
+  "chunks_processed": 1
+}

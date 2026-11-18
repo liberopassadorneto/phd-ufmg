@@ -1,0 +1,70 @@
+{
+  "model": "dongyru/Mistral-7B-Claim-Extractor",
+  "status": "partial",
+  "precision": "nf4",
+  "gpu": "NVIDIA GeForce RTX 2080",
+  "inference_seconds": 3.96,
+  "loading_seconds": 51.259,
+  "preflight_seconds": 23.605,
+  "checkpoint_verification_seconds": 135.129,
+  "download_seconds": 0.63,
+  "total_seconds": 220.608,
+  "vram_peak_gib": 4.471,
+  "vram_measurement": "NVML process memory",
+  "ram_peak_gib": 5.724,
+  "cpu_logical_count": 16,
+  "cpu_available_logical_count": 16,
+  "cpu_threads_configured": 8,
+  "vcpu_average_used": 0.649,
+  "vcpu_peak_used": 1.376,
+  "resource_sampling_interval_seconds": 1,
+  "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+  "resource_measurement_unavailable": [],
+  "cpu_average_percent": 64.87,
+  "cpu_peak_percent": 137.6,
+  "cpu_seconds": 39.732,
+  "temporary_storage_peak_gib": 0.0,
+  "temporary_storage_location": "disk",
+  "persistent_checkpoints": true,
+  "temporary_weights_removed": true,
+  "output_bytes": 70,
+  "warning": "Model output reached the generation limit and is incomplete; preserved without repair.",
+  "configuration": {
+    "sources": {
+      "model_card": "https://huggingface.co/dongyru/Mistral-7B-Claim-Extractor"
+    },
+    "generation": {
+      "bos_token_id": 1,
+      "eos_token_id": 2,
+      "_from_model_config": true,
+      "transformers_version": "4.57.6",
+      "max_length": 20,
+      "max_new_tokens": null,
+      "do_sample": false
+    },
+    "input": {
+      "preparation": "user-provided --prompt-file; no default extraction prompt",
+      "language": "en"
+    },
+    "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+    "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+    "input_partitioned": false,
+    "repositories": [
+      {
+        "repo": "dongyru/Mistral-7B-Claim-Extractor",
+        "revision": "fbc414ebe8a3aef8af1793b2b3d8f3f91dd29827"
+      }
+    ],
+    "hardware": {
+      "precision": "nf4",
+      "offload_fallback": true,
+      "selected_precision": "nf4",
+      "selected_dtype": "float16"
+    },
+    "overrides": {},
+    "prompt_file": "/home/libero_neto/phd-ufmg/claim-extractor/prompts/shared-zero-shot-v2.md",
+    "prompt_source": "user-provided"
+  },
+  "context_tokens": 32768,
+  "chunks_processed": 1
+}

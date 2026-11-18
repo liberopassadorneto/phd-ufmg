@@ -1,0 +1,904 @@
+[
+  {
+    "alias": "gemma-2b-aps",
+    "model": "google/gemma-2b-aps-it",
+    "status": "success",
+    "precision": "fp16",
+    "gpu": "NVIDIA GeForce RTX 2080",
+    "inference_seconds": 44.279,
+    "loading_seconds": 19.419,
+    "preflight_seconds": 29.889,
+    "checkpoint_verification_seconds": 45.422,
+    "download_seconds": 0.62,
+    "total_seconds": 145.962,
+    "vram_peak_gib": 4.936,
+    "vram_measurement": "NVML process memory",
+    "ram_peak_gib": 5.339,
+    "cpu_logical_count": 16,
+    "cpu_available_logical_count": 16,
+    "cpu_threads_configured": 8,
+    "vcpu_average_used": 0.862,
+    "vcpu_peak_used": 1.705,
+    "resource_sampling_interval_seconds": 1,
+    "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+    "resource_measurement_unavailable": [],
+    "cpu_average_percent": 86.17,
+    "cpu_peak_percent": 170.5,
+    "cpu_seconds": 60.361,
+    "temporary_storage_peak_gib": 0.0,
+    "temporary_storage_location": "disk",
+    "persistent_checkpoints": true,
+    "temporary_weights_removed": true,
+    "output_bytes": 3056,
+    "configuration": {
+      "sources": {
+        "model_card": "https://huggingface.co/google/gemma-2b-aps-it"
+      },
+      "generation": {
+        "max_new_tokens": 4096,
+        "pad_token_id": 0,
+        "bos_token_id": 2,
+        "eos_token_id": 1,
+        "_from_model_config": true,
+        "transformers_version": "4.57.6",
+        "max_length": 20,
+        "do_sample": false
+      },
+      "input": {
+        "preparation": "NLTK sentence markers; whole passage when it fits",
+        "language": "en",
+        "frozen_jsonl": "only when --aps-input is supplied"
+      },
+      "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+      "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+      "input_partitioned": false,
+      "repositories": [
+        {
+          "repo": "google/gemma-2b-aps-it",
+          "revision": "6526315a71d38bfbde56357466ddcc27629cfd78"
+        }
+      ],
+      "hardware": {
+        "precision": "fp16",
+        "offload_fallback": true,
+        "selected_precision": "fp16",
+        "selected_dtype": "float16"
+      },
+      "overrides": {}
+    },
+    "max_new_tokens": 4096,
+    "context_tokens": 8192,
+    "chunks_processed": 1
+  },
+  {
+    "alias": "gemma-7b-aps",
+    "model": "google/gemma-7b-aps-it",
+    "status": "success",
+    "precision": "nf4",
+    "gpu": "NVIDIA GeForce RTX 2080",
+    "inference_seconds": 94.525,
+    "loading_seconds": 31.792,
+    "preflight_seconds": 30.2,
+    "checkpoint_verification_seconds": 137.147,
+    "download_seconds": 0.622,
+    "total_seconds": 301.009,
+    "vram_peak_gib": 5.971,
+    "vram_measurement": "NVML process memory",
+    "ram_peak_gib": 7.419,
+    "cpu_logical_count": 16,
+    "cpu_available_logical_count": 16,
+    "cpu_threads_configured": 8,
+    "vcpu_average_used": 0.98,
+    "vcpu_peak_used": 1.735,
+    "resource_sampling_interval_seconds": 1,
+    "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+    "resource_measurement_unavailable": [],
+    "cpu_average_percent": 97.96,
+    "cpu_peak_percent": 173.5,
+    "cpu_seconds": 130.018,
+    "temporary_storage_peak_gib": 0.0,
+    "temporary_storage_location": "disk",
+    "persistent_checkpoints": true,
+    "temporary_weights_removed": true,
+    "output_bytes": 3005,
+    "configuration": {
+      "sources": {
+        "model_card": "https://huggingface.co/google/gemma-7b-aps-it"
+      },
+      "generation": {
+        "max_new_tokens": 4096,
+        "pad_token_id": 0,
+        "bos_token_id": 2,
+        "eos_token_id": 1,
+        "_from_model_config": true,
+        "transformers_version": "4.57.6",
+        "max_length": 20,
+        "do_sample": false
+      },
+      "input": {
+        "preparation": "NLTK sentence markers; whole passage when it fits",
+        "language": "en",
+        "frozen_jsonl": "only when --aps-input is supplied"
+      },
+      "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+      "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+      "input_partitioned": false,
+      "repositories": [
+        {
+          "repo": "google/gemma-7b-aps-it",
+          "revision": "0b6f012c7d463400f4774982db89b8f98e500edb"
+        }
+      ],
+      "hardware": {
+        "precision": "nf4",
+        "offload_fallback": true,
+        "selected_precision": "nf4",
+        "selected_dtype": "float16"
+      },
+      "overrides": {}
+    },
+    "max_new_tokens": 4096,
+    "context_tokens": 8192,
+    "chunks_processed": 1
+  },
+  {
+    "alias": "detective-qwen3b",
+    "model": "Luimas/claim-extractor-detective-qwen3b",
+    "status": "partial",
+    "precision": "fp16",
+    "gpu": "NVIDIA GeForce RTX 2080",
+    "inference_seconds": 79.853,
+    "loading_seconds": 12.426,
+    "preflight_seconds": 9.908,
+    "checkpoint_verification_seconds": 60.035,
+    "download_seconds": 0.635,
+    "total_seconds": 168.021,
+    "vram_peak_gib": 6.326,
+    "vram_measurement": "NVML process memory",
+    "ram_peak_gib": 4.403,
+    "cpu_logical_count": 16,
+    "cpu_available_logical_count": 16,
+    "cpu_threads_configured": 8,
+    "vcpu_average_used": 0.97,
+    "vcpu_peak_used": 1.726,
+    "resource_sampling_interval_seconds": 1,
+    "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+    "resource_measurement_unavailable": [],
+    "cpu_average_percent": 96.96,
+    "cpu_peak_percent": 172.6,
+    "cpu_seconds": 94.479,
+    "temporary_storage_peak_gib": 0.0,
+    "temporary_storage_location": "disk",
+    "persistent_checkpoints": true,
+    "temporary_weights_removed": true,
+    "output_bytes": 2971,
+    "warning": "Model output reached the generation limit and is incomplete; preserved without repair.",
+    "configuration": {
+      "sources": {
+        "model_card": "https://huggingface.co/Luimas/claim-extractor-detective-qwen3b",
+        "inference": "https://huggingface.co/Luimas/claim-extractor-detective-qwen3b/blob/main/scripts/inference_hf.py"
+      },
+      "generation": {
+        "max_length": 32768,
+        "max_new_tokens": 768,
+        "temperature": 0.7,
+        "top_k": 20,
+        "top_p": 0.8,
+        "repetition_penalty": 1.05,
+        "pad_token_id": 151645,
+        "eos_token_id": [
+          151645,
+          151643
+        ],
+        "transformers_version": "4.57.6",
+        "do_sample": false
+      },
+      "input": {
+        "preparation": "official prompt.txt plus tokenizer chat template",
+        "language": "en",
+        "max_characters": 4000
+      },
+      "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+      "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+      "input_partitioned": false,
+      "repositories": [
+        {
+          "repo": "Luimas/claim-extractor-detective-qwen3b",
+          "revision": "aca7d8336f30593e20ae3e79ecf28c1dba779478"
+        }
+      ],
+      "hardware": {
+        "precision": "fp16",
+        "offload_fallback": true,
+        "selected_precision": "fp16",
+        "selected_dtype": "float16"
+      },
+      "overrides": {}
+    },
+    "output_valid_json": false,
+    "max_new_tokens": 768,
+    "context_tokens": 32768,
+    "chunks_processed": 1
+  },
+  {
+    "alias": "newsscope",
+    "model": "nidhipandya/NewsScope-lora",
+    "status": "failed",
+    "precision": "offload",
+    "gpu": "NVIDIA GeForce RTX 2080",
+    "inference_seconds": 0.0,
+    "loading_seconds": 174.21,
+    "preflight_seconds": 21.218,
+    "checkpoint_verification_seconds": 153.297,
+    "download_seconds": 0.623,
+    "total_seconds": 1394.167,
+    "vram_peak_gib": 6.793,
+    "vram_measurement": "NVML process memory",
+    "ram_peak_gib": 19.051,
+    "cpu_logical_count": 16,
+    "cpu_available_logical_count": 16,
+    "cpu_threads_configured": 8,
+    "vcpu_average_used": 0.94,
+    "vcpu_peak_used": 4.545,
+    "resource_sampling_interval_seconds": 1,
+    "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+    "resource_measurement_unavailable": [],
+    "cpu_average_percent": 93.97,
+    "cpu_peak_percent": 454.5,
+    "cpu_seconds": 114.446,
+    "temporary_storage_peak_gib": 0.0,
+    "temporary_storage_location": "disk",
+    "persistent_checkpoints": true,
+    "temporary_weights_removed": true,
+    "output_bytes": 0,
+    "configuration": {
+      "sources": {
+        "model_card": "https://huggingface.co/nidhipandya/NewsScope-lora",
+        "repository": "https://github.com/nidhip1611/NewsScope",
+        "inference": "https://github.com/nidhip1611/NewsScope/blob/main/README.md"
+      },
+      "generation": {
+        "max_new_tokens": 2000,
+        "do_sample": true,
+        "temperature": 0.3,
+        "top_p": 0.9,
+        "bos_token_id": 128000,
+        "eos_token_id": [
+          128001,
+          128008,
+          128009
+        ],
+        "transformers_version": "4.57.6",
+        "max_length": 20
+      },
+      "input": {
+        "preparation": "author README article template",
+        "language": "en",
+        "domain_adaptation": "video transcript supplied as article"
+      },
+      "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+      "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+      "input_partitioned": false,
+      "repositories": [
+        {
+          "repo": "nidhipandya/NewsScope-lora",
+          "revision": "16ddedf01ec278c8804a8edb41fa62cd81c00a64"
+        },
+        {
+          "repo": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+          "revision": "0e9e39f249a16976918f6564b8830bc894c89659"
+        }
+      ],
+      "hardware": {
+        "precision": "nf4",
+        "offload_fallback": true,
+        "selected_precision": "offload",
+        "selected_dtype": "float16"
+      },
+      "overrides": {}
+    },
+    "attempt_errors": [
+      {
+        "precision": "nf4",
+        "phase": "loading_adapter",
+        "type": "OutOfMemoryError",
+        "error": "CUDA out of memory. Tried to allocate 2.00 MiB. GPU 0 has a total capacity of 7.78 GiB of which 1007.38 MiB is free. Including non-PyTorch memory, this process has 6.79 GiB memory in use. 6.67 GiB allowed; Of the allocated memory 5.60 GiB is allocated by PyTorch, and 1.07 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",
+        "traceback": "Traceback (most recent call last):\n  File \"/home/libero_neto/phd-ufmg/claim-extractor/claim_runner/worker.py\", line 86, in run\n    model, tokenizer = load_model(job)\n  File \"/home/libero_neto/phd-ufmg/claim-extractor/runtimes/newsscope/run.py\", line 43, in load_model\n    model = PeftModel.from_pretrained(model, job['repositories'][0]['local_path'],\n  File \"/home/libero_neto/phd-models/venv/newsscope/lib/python3.10/site-packages/peft/peft_model.py\", line 568, in from_pretrained\n    load_result = model.load_adapter(\n  File \"/home/libero_neto/phd-models/venv/newsscope/lib/python3.10/site-packages/peft/peft_model.py\", line 1362, in load_adapter\n    adapters_weights = load_peft_weights(\n  File \"/home/libero_neto/phd-models/venv/newsscope/lib/python3.10/site-packages/peft/utils/save_and_load.py\", line 693, in load_peft_weights\n    adapters_weights = safe_load_file(filename, device=device)\n  File \"/home/libero_neto/phd-models/venv/newsscope/lib/python3.10/site-packages/safetensors/torch.py\", line 360, in load_file\n    return f.get_tensors()\ntorch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 MiB. GPU 0 has a total capacity of 7.78 GiB of which 1007.38 MiB is free. Including non-PyTorch memory, this process has 6.79 GiB memory in use. 6.67 GiB allowed; Of the allocated memory 5.60 GiB is allocated by PyTorch, and 1.07 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)\n"
+      }
+    ],
+    "output_valid_json": false,
+    "max_new_tokens": 2000,
+    "context_tokens": 131072,
+    "chunks_processed": 0
+  },
+  {
+    "alias": "babelscape-t5",
+    "model": "Babelscape/t5-base-summarization-claim-extractor",
+    "status": "success",
+    "precision": "fp32",
+    "gpu": "NVIDIA GeForce RTX 2080",
+    "inference_seconds": 9.58,
+    "loading_seconds": 13.64,
+    "preflight_seconds": 9.825,
+    "checkpoint_verification_seconds": 8.486,
+    "download_seconds": 0.627,
+    "total_seconds": 47.327,
+    "vram_peak_gib": 1.273,
+    "vram_measurement": "NVML process memory",
+    "ram_peak_gib": 1.454,
+    "cpu_logical_count": 16,
+    "cpu_available_logical_count": 16,
+    "cpu_threads_configured": 8,
+    "vcpu_average_used": 0.798,
+    "vcpu_peak_used": 1.618,
+    "resource_sampling_interval_seconds": 1,
+    "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+    "resource_measurement_unavailable": [],
+    "cpu_average_percent": 79.84,
+    "cpu_peak_percent": 161.8,
+    "cpu_seconds": 22.873,
+    "temporary_storage_peak_gib": 0.0,
+    "temporary_storage_location": "disk",
+    "persistent_checkpoints": true,
+    "temporary_weights_removed": true,
+    "output_bytes": 938,
+    "configuration": {
+      "sources": {
+        "model_card": "https://huggingface.co/Babelscape/t5-base-summarization-claim-extractor",
+        "repository": "https://github.com/Babelscape/FENICE"
+      },
+      "generation": {
+        "max_length": 250,
+        "min_length": 2,
+        "num_beams": 5,
+        "pad_token_id": 0,
+        "eos_token_id": 1,
+        "decoder_start_token_id": 0,
+        "transformers_version": "4.57.6",
+        "max_new_tokens": null,
+        "do_sample": false
+      },
+      "input": {
+        "preparation": "text",
+        "language": "en",
+        "domain_adaptation": "video transcript supplied directly; no summarizer"
+      },
+      "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+      "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+      "input_partitioned": false,
+      "repositories": [
+        {
+          "repo": "Babelscape/t5-base-summarization-claim-extractor",
+          "revision": "94775fb1c8dc2c3ef1bfec413f9f961e6ba5a1c8"
+        }
+      ],
+      "hardware": {
+        "precision": "fp32",
+        "offload_fallback": true,
+        "selected_precision": "fp32",
+        "selected_dtype": "float32"
+      },
+      "overrides": {
+        "context_tokens": 512
+      }
+    },
+    "context_tokens": 512,
+    "chunks_processed": 1
+  },
+  {
+    "alias": "claimpt",
+    "model": "lfcc/bert-claimpt-chunk",
+    "status": "success",
+    "precision": "fp32",
+    "gpu": "NVIDIA GeForce RTX 2080",
+    "inference_seconds": 0.292,
+    "loading_seconds": 8.938,
+    "preflight_seconds": 10.682,
+    "checkpoint_verification_seconds": 5.245,
+    "download_seconds": 0.634,
+    "total_seconds": 30.682,
+    "vram_peak_gib": 0.551,
+    "vram_measurement": "NVML process memory",
+    "ram_peak_gib": 1.027,
+    "cpu_logical_count": 16,
+    "cpu_available_logical_count": 16,
+    "cpu_threads_configured": 8,
+    "vcpu_average_used": 0.817,
+    "vcpu_peak_used": 1.764,
+    "resource_sampling_interval_seconds": 1,
+    "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+    "resource_measurement_unavailable": [],
+    "cpu_average_percent": 81.72,
+    "cpu_peak_percent": 176.4,
+    "cpu_seconds": 12.715,
+    "temporary_storage_peak_gib": 0.0,
+    "temporary_storage_location": "disk",
+    "persistent_checkpoints": true,
+    "temporary_weights_removed": true,
+    "output_bytes": 52085,
+    "configuration": {
+      "sources": {
+        "model_card": "https://huggingface.co/lfcc/bert-claimpt-chunk"
+      },
+      "generation": {},
+      "input": {
+        "preparation": "Portuguese text; token windows",
+        "language": "pt",
+        "max_tokens": 512,
+        "stride": 128
+      },
+      "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.srt",
+      "input_sha256": "77f2375e47103b4b13d32f38ece35acc9c3cffa73440ae386ed0db33a960b40b",
+      "input_partitioned": false,
+      "repositories": [
+        {
+          "repo": "lfcc/bert-claimpt-chunk",
+          "revision": "df228d708a5386dc952d8a50e0cd8fa291b7be33"
+        }
+      ],
+      "hardware": {
+        "precision": "fp32",
+        "offload_fallback": true,
+        "selected_precision": "fp32",
+        "selected_dtype": "float32"
+      },
+      "overrides": {}
+    },
+    "output_valid_json": true,
+    "context_tokens": 512,
+    "chunks_processed": 1
+  },
+  {
+    "alias": "principled-4b",
+    "model": "principled-intelligence/claim-extractor-4B-q-2605",
+    "status": "success",
+    "precision": "nf4",
+    "gpu": "NVIDIA GeForce RTX 2080",
+    "inference_seconds": 182.162,
+    "loading_seconds": 17.896,
+    "preflight_seconds": 28.142,
+    "checkpoint_verification_seconds": 91.077,
+    "download_seconds": 0.619,
+    "total_seconds": 328.078,
+    "vram_peak_gib": 5.531,
+    "vram_measurement": "NVML process memory",
+    "ram_peak_gib": 10.711,
+    "cpu_logical_count": 16,
+    "cpu_available_logical_count": 16,
+    "cpu_threads_configured": 8,
+    "vcpu_average_used": 1.101,
+    "vcpu_peak_used": 4.228,
+    "resource_sampling_interval_seconds": 1,
+    "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+    "resource_measurement_unavailable": [],
+    "cpu_average_percent": 110.07,
+    "cpu_peak_percent": 422.8,
+    "cpu_seconds": 228.836,
+    "temporary_storage_peak_gib": 0.0,
+    "temporary_storage_location": "disk",
+    "persistent_checkpoints": true,
+    "temporary_weights_removed": true,
+    "output_bytes": 3608,
+    "configuration": {
+      "sources": {
+        "model_card": "https://huggingface.co/principled-intelligence/claim-extractor-4B-q-2605",
+        "repository": "https://github.com/Principled-Intelligence/orbitals",
+        "inference": "https://github.com/Principled-Intelligence/orbitals/blob/v0.6.1/src/hf_pipeline/claim_extractor.py"
+      },
+      "generation": {
+        "max_new_tokens": 20000,
+        "do_sample": true,
+        "use_cache": true,
+        "temperature": 0.7,
+        "top_k": 20,
+        "top_p": 0.8,
+        "min_p": 0.0,
+        "repetition_penalty": 1.0,
+        "pad_token_id": 248055,
+        "eos_token_id": 248044,
+        "_from_model_config": true,
+        "transformers_version": "5.5.0",
+        "max_length": null
+      },
+      "input": {
+        "preparation": "Orbitals build_prompt",
+        "language": "en",
+        "message_role": "assistant",
+        "ai_service_description": null,
+        "skip_evidences": true
+      },
+      "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+      "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+      "input_partitioned": false,
+      "repositories": [
+        {
+          "repo": "principled-intelligence/claim-extractor-4B-q-2605",
+          "revision": "7c811630877597617cc8716b17db973fbcb8c311"
+        }
+      ],
+      "hardware": {
+        "precision": "nf4",
+        "offload_fallback": true,
+        "selected_precision": "nf4",
+        "selected_dtype": "float16"
+      },
+      "overrides": {}
+    },
+    "output_valid_json": true,
+    "max_new_tokens": 20000,
+    "context_tokens": 262144,
+    "chunks_processed": 1
+  },
+  {
+    "alias": "principled-2b",
+    "model": "principled-intelligence/claim-extractor-2B-q-2605",
+    "status": "success",
+    "precision": "fp16",
+    "gpu": "NVIDIA GeForce RTX 2080",
+    "inference_seconds": 92.032,
+    "loading_seconds": 14.334,
+    "preflight_seconds": 9.836,
+    "checkpoint_verification_seconds": 40.646,
+    "download_seconds": 0.635,
+    "total_seconds": 164.503,
+    "vram_peak_gib": 5.328,
+    "vram_measurement": "NVML process memory",
+    "ram_peak_gib": 7.586,
+    "cpu_logical_count": 16,
+    "cpu_available_logical_count": 16,
+    "cpu_threads_configured": 8,
+    "vcpu_average_used": 1.088,
+    "vcpu_peak_used": 4.87,
+    "resource_sampling_interval_seconds": 1,
+    "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+    "resource_measurement_unavailable": [],
+    "cpu_average_percent": 108.78,
+    "cpu_peak_percent": 487.0,
+    "cpu_seconds": 122.839,
+    "temporary_storage_peak_gib": 0.0,
+    "temporary_storage_location": "disk",
+    "persistent_checkpoints": true,
+    "temporary_weights_removed": true,
+    "output_bytes": 3729,
+    "configuration": {
+      "sources": {
+        "model_card": "https://huggingface.co/principled-intelligence/claim-extractor-2B-q-2605",
+        "repository": "https://github.com/Principled-Intelligence/orbitals",
+        "inference": "https://github.com/Principled-Intelligence/orbitals/blob/v0.6.1/src/hf_pipeline/claim_extractor.py"
+      },
+      "generation": {
+        "max_new_tokens": 20000,
+        "do_sample": true,
+        "use_cache": true,
+        "temperature": 0.7,
+        "top_k": 20,
+        "top_p": 0.8,
+        "min_p": 0.0,
+        "repetition_penalty": 1.0,
+        "pad_token_id": 248055,
+        "eos_token_id": 248044,
+        "_from_model_config": true,
+        "transformers_version": "5.5.0",
+        "max_length": null
+      },
+      "input": {
+        "preparation": "Orbitals build_prompt",
+        "language": "en",
+        "message_role": "assistant",
+        "ai_service_description": null,
+        "skip_evidences": true
+      },
+      "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+      "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+      "input_partitioned": false,
+      "repositories": [
+        {
+          "repo": "principled-intelligence/claim-extractor-2B-q-2605",
+          "revision": "b889430c75c6c744eba3e5a00670e521f000f02c"
+        }
+      ],
+      "hardware": {
+        "precision": "fp16",
+        "offload_fallback": true,
+        "selected_precision": "fp16",
+        "selected_dtype": "float16"
+      },
+      "overrides": {}
+    },
+    "output_valid_json": true,
+    "max_new_tokens": 20000,
+    "context_tokens": 262144,
+    "chunks_processed": 1
+  },
+  {
+    "alias": "dongyru-mistral",
+    "model": "dongyru/Mistral-7B-Claim-Extractor",
+    "status": "partial",
+    "precision": "nf4",
+    "gpu": "NVIDIA GeForce RTX 2080",
+    "inference_seconds": 3.96,
+    "loading_seconds": 51.259,
+    "preflight_seconds": 23.605,
+    "checkpoint_verification_seconds": 135.129,
+    "download_seconds": 0.63,
+    "total_seconds": 220.608,
+    "vram_peak_gib": 4.471,
+    "vram_measurement": "NVML process memory",
+    "ram_peak_gib": 5.724,
+    "cpu_logical_count": 16,
+    "cpu_available_logical_count": 16,
+    "cpu_threads_configured": 8,
+    "vcpu_average_used": 0.649,
+    "vcpu_peak_used": 1.376,
+    "resource_sampling_interval_seconds": 1,
+    "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+    "resource_measurement_unavailable": [],
+    "cpu_average_percent": 64.87,
+    "cpu_peak_percent": 137.6,
+    "cpu_seconds": 39.732,
+    "temporary_storage_peak_gib": 0.0,
+    "temporary_storage_location": "disk",
+    "persistent_checkpoints": true,
+    "temporary_weights_removed": true,
+    "output_bytes": 70,
+    "warning": "Model output reached the generation limit and is incomplete; preserved without repair.",
+    "configuration": {
+      "sources": {
+        "model_card": "https://huggingface.co/dongyru/Mistral-7B-Claim-Extractor"
+      },
+      "generation": {
+        "bos_token_id": 1,
+        "eos_token_id": 2,
+        "_from_model_config": true,
+        "transformers_version": "4.57.6",
+        "max_length": 20,
+        "max_new_tokens": null,
+        "do_sample": false
+      },
+      "input": {
+        "preparation": "user-provided --prompt-file; no default extraction prompt",
+        "language": "en"
+      },
+      "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+      "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+      "input_partitioned": false,
+      "repositories": [
+        {
+          "repo": "dongyru/Mistral-7B-Claim-Extractor",
+          "revision": "fbc414ebe8a3aef8af1793b2b3d8f3f91dd29827"
+        }
+      ],
+      "hardware": {
+        "precision": "nf4",
+        "offload_fallback": true,
+        "selected_precision": "nf4",
+        "selected_dtype": "float16"
+      },
+      "overrides": {},
+      "prompt_file": "/home/libero_neto/phd-ufmg/claim-extractor/prompts/shared-zero-shot-v2.md",
+      "prompt_source": "user-provided"
+    },
+    "context_tokens": 32768,
+    "chunks_processed": 1
+  },
+  {
+    "alias": "fc-claim-det-t5",
+    "model": "varadhbhatnagar/fc-claim-det-T5-base",
+    "status": "partial",
+    "precision": "fp32",
+    "gpu": "NVIDIA GeForce RTX 2080",
+    "inference_seconds": 1.071,
+    "loading_seconds": 10.397,
+    "preflight_seconds": 9.449,
+    "checkpoint_verification_seconds": 8.103,
+    "download_seconds": 0.623,
+    "total_seconds": 34.573,
+    "vram_peak_gib": 1.229,
+    "vram_measurement": "NVML process memory",
+    "ram_peak_gib": 1.91,
+    "cpu_logical_count": 16,
+    "cpu_available_logical_count": 16,
+    "cpu_threads_configured": 8,
+    "vcpu_average_used": 0.897,
+    "vcpu_peak_used": 1.774,
+    "resource_sampling_interval_seconds": 1,
+    "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+    "resource_measurement_unavailable": [],
+    "cpu_average_percent": 89.74,
+    "cpu_peak_percent": 177.4,
+    "cpu_seconds": 14.928,
+    "temporary_storage_peak_gib": 0.0,
+    "temporary_storage_location": "disk",
+    "persistent_checkpoints": true,
+    "temporary_weights_removed": true,
+    "output_bytes": 59,
+    "warning": "Model output reached the generation limit and is incomplete; preserved without repair.",
+    "configuration": {
+      "sources": {
+        "model_card": "https://huggingface.co/varadhbhatnagar/fc-claim-det-T5-base",
+        "repository": "https://github.com/varadhbhatnagar/FC-Claim-Det",
+        "preprocessing": "https://github.com/varadhbhatnagar/FC-Claim-Det/blob/main/colab_scripts/Datafile_Generator.ipynb"
+      },
+      "generation": {
+        "max_length": 15,
+        "min_length": 5,
+        "early_stopping": true,
+        "num_beams": 6,
+        "no_repeat_ngram_size": 2,
+        "pad_token_id": 0,
+        "eos_token_id": 1,
+        "decoder_start_token_id": 0,
+        "_from_model_config": true,
+        "transformers_version": "4.57.6",
+        "max_new_tokens": null,
+        "do_sample": false
+      },
+      "input": {
+        "preparation": "published mention/hashtag-run removal",
+        "language": "en"
+      },
+      "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+      "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+      "input_partitioned": false,
+      "repositories": [
+        {
+          "repo": "varadhbhatnagar/fc-claim-det-T5-base",
+          "revision": "1f8b7343206b0f5a0787d7ba1f2b55c11bdff6a2"
+        }
+      ],
+      "hardware": {
+        "precision": "fp32",
+        "offload_fallback": true,
+        "selected_precision": "fp32",
+        "selected_dtype": "float32"
+      },
+      "overrides": {}
+    },
+    "context_tokens": 512,
+    "chunks_processed": 1
+  },
+  {
+    "alias": "sagesse-mistral",
+    "model": "SAGESSE-EPFL/Mistral-7b-claims-extraction",
+    "status": "partial",
+    "precision": "nf4",
+    "gpu": "NVIDIA GeForce RTX 2080",
+    "inference_seconds": 5.038,
+    "loading_seconds": 137.367,
+    "preflight_seconds": 21.31,
+    "checkpoint_verification_seconds": 329.132,
+    "download_seconds": 0.644,
+    "total_seconds": 504.396,
+    "vram_peak_gib": 4.668,
+    "vram_measurement": "NVML process memory",
+    "ram_peak_gib": 5.738,
+    "cpu_logical_count": 16,
+    "cpu_available_logical_count": 16,
+    "cpu_threads_configured": 8,
+    "vcpu_average_used": 0.37,
+    "vcpu_peak_used": 1.003,
+    "resource_sampling_interval_seconds": 1,
+    "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+    "resource_measurement_unavailable": [],
+    "cpu_average_percent": 37.02,
+    "cpu_peak_percent": 100.3,
+    "cpu_seconds": 56.503,
+    "temporary_storage_peak_gib": 0.0,
+    "temporary_storage_location": "disk",
+    "persistent_checkpoints": true,
+    "temporary_weights_removed": true,
+    "output_bytes": 65,
+    "warning": "Model output reached the generation limit and is incomplete; preserved without repair.",
+    "configuration": {
+      "sources": {
+        "model_card": "https://huggingface.co/SAGESSE-EPFL/Mistral-7b-claims-extraction"
+      },
+      "generation": {
+        "bos_token_id": 1,
+        "eos_token_id": 2,
+        "_from_model_config": true,
+        "transformers_version": "4.57.6",
+        "max_length": 20,
+        "max_new_tokens": null,
+        "do_sample": false
+      },
+      "input": {
+        "preparation": "published README template",
+        "language": "en",
+        "submission": "",
+        "parent_comment": "",
+        "domain_adaptation": "video transcript supplied as comment"
+      },
+      "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+      "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+      "input_partitioned": false,
+      "repositories": [
+        {
+          "repo": "SAGESSE-EPFL/Mistral-7b-claims-extraction",
+          "revision": "50338abc973e34741575124531465d65589b4023"
+        }
+      ],
+      "hardware": {
+        "precision": "nf4",
+        "offload_fallback": true,
+        "selected_precision": "nf4",
+        "selected_dtype": "float16"
+      },
+      "overrides": {}
+    },
+    "output_valid_json": false,
+    "context_tokens": 32768,
+    "chunks_processed": 1
+  },
+  {
+    "alias": "mistral-instruct-v02",
+    "model": "mistralai/Mistral-7B-Instruct-v0.2",
+    "status": "partial",
+    "precision": "nf4",
+    "gpu": "NVIDIA GeForce RTX 2080",
+    "inference_seconds": 4.652,
+    "loading_seconds": 120.855,
+    "preflight_seconds": 29.635,
+    "checkpoint_verification_seconds": 165.796,
+    "download_seconds": 0.618,
+    "total_seconds": 329.223,
+    "vram_peak_gib": 4.471,
+    "vram_measurement": "NVML process memory",
+    "ram_peak_gib": 5.694,
+    "cpu_logical_count": 16,
+    "cpu_available_logical_count": 16,
+    "cpu_threads_configured": 8,
+    "vcpu_average_used": 0.355,
+    "vcpu_peak_used": 1.302,
+    "resource_sampling_interval_seconds": 1,
+    "resource_measurement_notes": "CPU 100% = one logical CPU; vCPU usage is CPU percent / 100. RAM includes the sampled process tree; brief peaks may be missed.",
+    "resource_measurement_unavailable": [],
+    "cpu_average_percent": 35.53,
+    "cpu_peak_percent": 130.2,
+    "cpu_seconds": 47.161,
+    "temporary_storage_peak_gib": 0.0,
+    "temporary_storage_location": "disk",
+    "persistent_checkpoints": true,
+    "temporary_weights_removed": true,
+    "output_bytes": 87,
+    "warning": "Model output reached the generation limit and is incomplete; preserved without repair.",
+    "configuration": {
+      "sources": {
+        "model_card": "https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.2"
+      },
+      "generation": {
+        "bos_token_id": 1,
+        "eos_token_id": 2,
+        "_from_model_config": true,
+        "transformers_version": "4.57.6",
+        "max_length": 20,
+        "max_new_tokens": null,
+        "do_sample": false
+      },
+      "input": {
+        "preparation": "user-provided --prompt-file; no default extraction prompt",
+        "language": "en"
+      },
+      "input_file": "/home/libero_neto/phd-ufmg/claim-extractor/automatic.en.txt",
+      "input_sha256": "9880b647a35a54115e4ac4c64a307d36acc73c171008590cf64194e481dba494",
+      "input_partitioned": false,
+      "repositories": [
+        {
+          "repo": "mistralai/Mistral-7B-Instruct-v0.2",
+          "revision": "63a8b081895390a26e140280378bc85ec8bce07a"
+        }
+      ],
+      "hardware": {
+        "precision": "nf4",
+        "offload_fallback": true,
+        "selected_precision": "nf4",
+        "selected_dtype": "float16"
+      },
+      "overrides": {},
+      "prompt_file": "/home/libero_neto/phd-ufmg/claim-extractor/prompts/shared-zero-shot-v2.md",
+      "prompt_source": "user-provided"
+    },
+    "context_tokens": 32768,
+    "chunks_processed": 1
+  }
+]
