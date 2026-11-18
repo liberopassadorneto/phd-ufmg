@@ -1,6 +1,4 @@
 """Persistent local storage shared by preparation and inference."""
-import hashlib
-import json
 import os
 import tempfile
 from pathlib import Path
@@ -28,21 +26,3 @@ def configure(root):
     os.environ['UV_LINK_MODE'] = 'hardlink'
     tempfile.tempdir = str(root / 'tmp')
     return root
-
-
-def runtime_stamp(root, spec):
-    return Path(root) / 'manifests' / f'{spec.alias}.runtime.json'
-
-
-def runtime_identity(project, python):
-    return {'python': python, **{name: hashlib.sha256((project / name).read_bytes()).hexdigest()
-                               for name in ('pyproject.toml', 'uv.lock')}}
-
-
-def verify_runtime(root, spec, project, python):
-    stamp = runtime_stamp(root, spec)
-    env = Path(root) / 'venv' / spec.runtime
-    if not (env / 'bin/python').exists() or not stamp.is_file():
-        raise RuntimeError(f'Missing prepared runtime for {spec.alias}; run scripts/prepare-models.py')
-    if json.loads(stamp.read_text()) != runtime_identity(project, python):
-        raise RuntimeError(f'Prepared runtime changed for {spec.alias}; rerun scripts/prepare-models.py')

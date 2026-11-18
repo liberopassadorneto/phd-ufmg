@@ -24,7 +24,7 @@ from claim_runner.catalog import MODELS, select_models
 from claim_runner.downloads import download_repositories, repository_manifest
 from claim_runner.prepared import load as load_prepared
 from claim_runner.inputs import read_transcript
-from claim_runner.storage import configure, verify_runtime
+from claim_runner.storage import configure
 from claim_runner.outputs import export_result
 from claim_runner.resources import (GIB, Monitor, choose_staging, cleanup_staging,
                                     create_staging, directory_size, write_json)
@@ -35,7 +35,6 @@ def parse_args(argv=None, model_alias=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--models", default=model_alias or "all", help="Comma-separated aliases/HF IDs or all")
     parser.add_argument("--list-models", action="store_true")
-    parser.add_argument("--check", action="store_true", help="Install/check runtimes and CUDA; do not download models")
     parser.add_argument("--input", type=Path, help="Transcript for one model; English input in mixed runs")
     parser.add_argument("--input-en", type=Path, help="English video transcript (.txt or .srt)")
     parser.add_argument("--input-pt", type=Path, help="Portuguese input for ClaimPT")
@@ -180,33 +179,13 @@ def ensure_runtime(args, spec, run_dir, cache):
         project = args.runtime_dir / spec.runtime
         environment = runtime_environment(args, spec)
         prepared = args.storage and args.offline
-        if args.check and prepared:
-            verify_runtime(args.storage, spec, project, args.python)
         print(f"{'Using prepared runtime' if prepared else 'Preparing uv runtime'}: {spec.runtime}", flush=True)
         setup = {"returncode": 0, "prepared": True} if args.storage and args.offline else command_record(["uv", "sync", "--frozen", "--project", str(project.resolve()),
                                 "--python", args.python], folder / "setup", env=environment)
         if setup["returncode"] != 0:
             raise RuntimeError(f"Runtime setup failed; see {folder / 'setup/process.log'}")
         cache[spec.runtime] = {"setup": setup, "folder": str(folder)}
-    state = cache[spec.runtime]
-    if args.check:
-        if "cuda" not in state:
-            probe_dir = Path(state["folder"]) / "cuda"
-            probe_dir.mkdir(parents=True, exist_ok=True)
-            state["cuda"] = command_record(worker_command(args, spec, "--probe", probe_dir / "cuda.json"),
-                                           probe_dir, timeout=120, env=runtime_environment(args, spec))
-        if state["cuda"]["returncode"] != 0:
-            raise RuntimeError(f"CUDA/FP16 preflight failed; see {state['folder']}/cuda/process.log")
-    return state
-
-
-def ensure_quantization(args, spec, state):
-    if "nf4" not in state:
-        folder = Path(state["folder"]) / "nf4"
-        folder.mkdir(parents=True, exist_ok=True)
-        state["nf4"] = command_record(worker_command(args, spec, "--probe", folder / "nf4.json", "--quantized"),
-                                      folder, timeout=120, env=runtime_environment(args, spec))
-    return state["nf4"]["returncode"] == 0
+    return cache[spec.runtime]
 
 
 def prepare_inputs(args):
@@ -390,28 +369,16 @@ def main(argv=None, model_alias=None):
     inputs, aps = prepare_inputs(args)
     if args.output_dir is not None:
         args.output_dir.mkdir(parents=True, exist_ok=True)
-    if args.storage and not args.check:
+    if args.storage:
         if any(args.output_dir.iterdir()):
             raise RuntimeError("Results directory is not empty; choose a fresh --output-dir")
         write_json(args.output_dir / "inputs.json", inputs)
     args.staging_dir.mkdir(parents=True, exist_ok=True)
     records = []
-    # Worker communication and runtime probes live only in this temporary directory.
+    # Worker communication lives only in this temporary directory.
     with tempfile.TemporaryDirectory(prefix="claim-run-", dir=args.staging_dir) as temporary:
         run_dir = Path(temporary)
         runtimes = {}
-        if args.check:
-            failures = []
-            for spec in args.selected:
-                try:
-                    state = ensure_runtime(args, spec, run_dir, runtimes)
-                    mode = spec.precision if args.precision == "auto" else args.precision
-                    if mode == "nf4" and not ensure_quantization(args, spec, state):
-                        failures.append(f"{spec.alias}: NF4 probe failed; offload would be used")
-                except Exception as exc:
-                    failures.append(f"{spec.alias}: {exc}")
-            print("\n".join(failures) if failures else "All selected runtime/CUDA checks passed.", flush=True)
-            return int(bool(failures))
         for spec in args.selected:
             destination = (args.output_dir or Path(spec.default_output)).resolve() / spec.alias
             if destination.exists() and any(destination.iterdir()):

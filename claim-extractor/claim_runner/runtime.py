@@ -105,12 +105,7 @@ def entrypoint(spec, load_model, prepare_chunks, infer):
     import argparse
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--job", type=Path)
-    parser.add_argument("--probe", type=Path)
-    parser.add_argument("--quantized", action="store_true")
     internal, remaining = parser.parse_known_args()
-    if internal.probe:
-        from .worker import probe
-        return probe(internal.quantized, internal.probe)
     if internal.job:
         from .worker import run
         return run(internal.job, spec, load_model, prepare_chunks, infer)

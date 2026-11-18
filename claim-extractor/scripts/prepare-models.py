@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Prepare persistent checkpoints and locked dependencies without loading CUDA."""
 import argparse
-import json
 import os
 import shutil
 import subprocess
@@ -14,7 +13,7 @@ from claim_runner.catalog import select_models
 from claim_runner.downloads import repository_manifest, download_repositories
 from claim_runner.prepared import publish, load
 from claim_runner.resources import GIB
-from claim_runner.storage import configure, ROOT, runtime_identity, runtime_stamp
+from claim_runner.storage import configure, ROOT
 
 
 def main():
@@ -72,10 +71,6 @@ def main():
                 with (root / 'logs' / f'prepare-{spec.alias}.log').open('w') as log:
                     subprocess.run(['uv', 'sync', '--frozen', '--project', str(project), '--python', args.python],
                                    env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
-                stamp = runtime_stamp(root, spec)
-                temp = stamp.with_suffix('.tmp')
-                temp.write_text(json.dumps(runtime_identity(project, args.python)))
-                os.replace(temp, stamp)
             records = plans[spec.alias]
             if not all('local_path' in r for r in records):
                 with tempfile.TemporaryDirectory(dir=root / 'tmp', prefix='prepare-') as staging:

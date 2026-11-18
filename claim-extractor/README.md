@@ -110,8 +110,7 @@ uv run --frozen scripts/run_models.py --models all \
 
 It starts the corresponding `run.py` in each model's environment, downloads
 one checkpoint at a time, records resource use and removes temporary weights
-before proceeding. Dependencies remain cached. `--check` installs and probes the
-selected runtimes without downloading model weights or generating responses.
+before proceeding. Dependencies remain cached.
 Accept the Gemma and Meta Llama access conditions on Hugging Face before
 downloading gated checkpoints; NewsScope requires its Llama base.
 

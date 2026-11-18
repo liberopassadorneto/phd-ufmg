@@ -12,34 +12,6 @@ from .outputs import write_outputs
 from .runtime import generation_configuration
 
 
-def probe(quantized: bool, destination: Path) -> int:
-    import torch
-    import transformers
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is unavailable; no model weights were downloaded")
-    x = torch.tensor([1., 2.], device="cuda", dtype=torch.float16)
-    if (x * 2).tolist() != [2., 4.]:
-        raise RuntimeError("FP16 CUDA operation failed")
-    quantization = None
-    if quantized:
-        import bitsandbytes as bnb
-        layer = bnb.nn.Linear4bit(64, 64, bias=False, compute_dtype=torch.float16,
-                                 quant_type="nf4", compress_statistics=True).to("cuda")
-        with torch.inference_mode():
-            y = layer(torch.ones(1, 64, device="cuda", dtype=torch.float16))
-        torch.cuda.synchronize()
-        if not torch.isfinite(y).all().item():
-            raise RuntimeError("NF4 CUDA operation produced nonfinite values")
-        quantization = bnb.__version__
-    write_json(destination, {"torch": torch.__version__, "transformers": transformers.__version__,
-                             "bitsandbytes": quantization, "cuda": torch.version.cuda,
-                             "gpu": torch.cuda.get_device_name(0),
-                             "compute_capability": list(torch.cuda.get_device_capability(0)),
-                             "total_vram_bytes": torch.cuda.get_device_properties(0).total_memory})
-    return 0
-
-
-
 def run(job_path, spec, load_model, prepare_chunks, infer):
     job = json.loads(Path(job_path).read_text(encoding='utf-8'))
     output = Path(job['output'])
