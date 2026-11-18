@@ -12,13 +12,11 @@ case "$mode" in
   prepare)
     uv run --frozen --python 3.10 scripts/prepare-models.py --storage "$root" "$@"
     ;;
-  run|check)
+  run)
     export UV_OFFLINE=1 UV_PYTHON_DOWNLOADS=never
-    args=()
-    [[ "$mode" == check ]] && args+=(--check)
     uv run --frozen --no-sync --python 3.10 scripts/run_models.py \
       --storage "$root" --offline --model-timeout "${MODEL_TIMEOUT_SECONDS:-7200}" \
-      "${args[@]}" "$@"
+      "$@"
     ;;
-  *) echo 'Usage: bash run-cuba.sh [prepare|run|check] [options]' >&2; exit 2 ;;
+  *) echo 'Usage: bash run-cuba.sh [prepare|run] [options]' >&2; exit 2 ;;
 esac
