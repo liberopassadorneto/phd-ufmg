@@ -263,7 +263,7 @@ def process_video(
     proxy_list=None,
 ):
     """Função orquestradora que retorna 'SUCCESS', 'UNAVAILABLE', 'AGE_RESTRICTED',
-    'BOT_BLOCK', 'SESSION_BLOCK' ou 'ERROR'."""
+    'RATE_LIMIT_429', 'BOT_BLOCK', 'SESSION_BLOCK' ou 'ERROR'."""
     global current_proxy_index
     current_proxy_index = load_proxy_index(cookies_dir)
     last_status = "BOT_BLOCK"
@@ -349,7 +349,8 @@ def process_video(
                 )
                 return "AGE_RESTRICTED"
 
-            # 429 pontual (ex.: legendas): erro transitório, não é bloqueio.
+            # 429 (ex.: legendas): não é bloqueio de IP, então não rotaciona.
+            # O manager registra o ID em ids_429.txt para não tentar de novo.
             rate_limit_indicators = (
                 "http error 429",
                 "too many requests",
@@ -360,7 +361,7 @@ def process_video(
                     f"[{video_id}] Erro no processamento (rate-limit, nao e"
                     f" bloqueio de IP): {error_str}"
                 )
-                return "ERROR"
+                return "RATE_LIMIT_429"
 
             unavailable_indicators = (
                 "video unavailable",
@@ -490,5 +491,7 @@ if __name__ == "__main__":
         sys.exit(3)
     elif status == "AGE_RESTRICTED":
         sys.exit(4)
+    elif status == "RATE_LIMIT_429":
+        sys.exit(5)
     elif status != "SUCCESS":
         sys.exit(1)

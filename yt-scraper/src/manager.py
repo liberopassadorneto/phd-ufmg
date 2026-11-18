@@ -42,8 +42,36 @@ def send_telegram_message(text, bot_token, chat_id):
         return False
 
 
-def load_and_filter_csv(csv_path, synced_ids: set[str]):
-    """Lê o CSV original e remove os IDs que já constam como sincronizados no Postgres."""
+def load_ids_429(path):
+    """Lê o txt com os IDs que já deram erro 429 (um por linha)."""
+    if not os.path.exists(path):
+        return set()
+    with open(path, encoding="utf-8") as f:
+        return {line.strip() for line in f if line.strip()}
+
+
+def append_ids_429(path, new_ids):
+    """Adiciona ao final do txt os IDs novos com 429, sem duplicar os existentes."""
+    known_ids = load_ids_429(path)
+    ids_to_add = [vid for vid in dict.fromkeys(new_ids) if vid not in known_ids]
+    if not ids_to_add:
+        return 0
+
+    needs_newline = False
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        with open(path, "rb") as f:
+            f.seek(-1, os.SEEK_END)
+            needs_newline = f.read(1) != b"\n"
+
+    with open(path, "a", encoding="utf-8") as f:
+        if needs_newline:
+            f.write("\n")
+        f.write("\n".join(ids_to_add) + "\n")
+    return len(ids_to_add)
+
+
+def load_and_filter_csv(csv_path, synced_ids: set[str], skip_ids=frozenset()):
+    """Lê o CSV original e remove os IDs já sincronizados no Postgres ou com 429 conhecido."""
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"Arquivo CSV nao encontrado em: {csv_path}")
 
@@ -54,18 +82,22 @@ def load_and_filter_csv(csv_path, synced_ids: set[str]):
 
     pending_rows = []
     already_processed = 0
+    skipped_429 = 0
 
     for row in rows:
         vid = row.get("Video_id") or row.get("video_id")
         if vid and str(vid).strip() in synced_ids:
             already_processed += 1
+        elif vid and str(vid).strip() in skip_ids:
+            skipped_429 += 1
         else:
             pending_rows.append(row)
 
     original_total = len(rows)
     print(
         f"[INIT] Total CSV: {original_total} | Ja sincronizados no DB:"
-        f" {already_processed} | Pendentes: {len(pending_rows)}"
+        f" {already_processed} | Pulados (429 conhecido): {skipped_429} |"
+        f" Pendentes: {len(pending_rows)}"
     )
 
     pending_csv_path = "csv_pending_execution.csv"
@@ -249,6 +281,7 @@ def worker_process(
         extracted_videos = 0
         block_detected = False
         session_blocked = False
+        rate_limited_ids = []
         cookie_name = os.path.basename(cookie_path)
         abs_output_dir = os.path.abspath(output_dir)
 
@@ -339,6 +372,15 @@ def worker_process(
                 if row in pending_videos:
                     pending_videos.remove(row)
                 continue
+            elif proc.returncode == 5:
+                print(
+                    f">> [PERFIL {profile_id}] [{video_id}] [PULADO] Erro 429, ID sera registrado no txt de 429.",
+                    flush=True,
+                )
+                rate_limited_ids.append(str(video_id).strip())
+                if row in pending_videos:
+                    pending_videos.remove(row)
+                continue
             elif proc.returncode == 3:
                 session_blocked = True
                 print(
@@ -395,6 +437,7 @@ def worker_process(
             f"Total de Videos Alocados: {len(rows)}\n"
             f"Videos Extraidos e Sincronizados: {extracted_videos}\n"
             f"Videos Pendentes/Restantes: {len(pending_videos)}\n"
+            f"Videos com erro 429: {len(rate_limited_ids)}\n"
             f"Status Final: {status_label}\n"
             f"Tempo de Execucao: {formatted_time}\n"
             f"========================================\n"
@@ -417,6 +460,7 @@ def worker_process(
             "profile_id": profile_id,
             "extracted": extracted_videos,
             "pending": pending_videos,
+            "rate_limited": rate_limited_ids,
             "blocked": block_detected or session_blocked,
             "time": total_time,
             "fieldnames": headers,
@@ -503,13 +547,17 @@ def main():
     root_sync = StorageSyncManager(pg_config=pg_config, s3_config=s3_config)
     synced_ids = root_sync.get_already_synced_youtube_ids()
 
+    ids_429_path = config.get("DEFAULT", "ids_429", fallback="ids_429.txt")
+    known_429_ids = load_ids_429(ids_429_path)
+    print(f"[INIT] IDs com 429 conhecidos em '{ids_429_path}': {len(known_429_ids)}")
+
     (
         filtered_csv_path,
         pending_records,
         headers,
         original_total,
         already_processed,
-    ) = load_and_filter_csv(target_csv, synced_ids)
+    ) = load_and_filter_csv(target_csv, synced_ids, known_429_ids)
 
     if not pending_records:
         print("[INIT] Todos os videos do CSV ja estao sincronizados. Encerrando.")
@@ -585,14 +633,19 @@ def main():
                 print(f"[ERRO][WORKER] Falha na execucao do perfil: {e}")
 
     all_unextracted = []
+    new_429_ids = []
     total_extracted = 0
     total_blocks = 0
 
     for res in results:
         total_extracted += res["extracted"]
         all_unextracted.extend(res["pending"])
+        new_429_ids.extend(res["rate_limited"])
         if res["blocked"]:
             total_blocks += 1
+
+    added_429 = append_ids_429(ids_429_path, new_429_ids)
+    print(f"[429] {added_429} novo(s) ID(s) adicionado(s) a '{ids_429_path}'.")
 
     final_pending_csv = "csv_not_extracted_final.csv"
     with open(final_pending_csv, mode="w", encoding="utf-8", newline="") as f:
@@ -623,6 +676,7 @@ def main():
         f"Perfis de cookies utilizados: {num_cookies}\n"
         f"Total de videos sincronizados nesta sessao: {total_extracted}\n"
         f"Total de videos que ainda faltam: {len(all_unextracted)}\n"
+        f"Novos IDs com erro 429 registrados: {added_429}\n"
         f"Contas/Cookies que sofreram bloqueio: {total_blocks}\n"
         f"Tempo total decorrido: {overall_total_time}\n"
         f"========================================\n"
