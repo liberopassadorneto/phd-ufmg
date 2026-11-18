@@ -96,7 +96,7 @@ def load_and_filter_csv(csv_path, synced_ids: set[str], skip_ids=frozenset()):
     original_total = len(rows)
     print(
         f"[INIT] Total CSV: {original_total} | Ja sincronizados no DB:"
-        f" {already_processed} | Pulados (lista de exclusao): {skipped_429} |"
+        f" {already_processed} | Pulados (fora do idioma pt): {skipped_429} |"
         f" Pendentes: {len(pending_rows)}"
     )
 
@@ -384,12 +384,11 @@ def worker_process(
                 continue
             elif proc.returncode == 5:
                 print(
-                    f">> [PERFIL {profile_id}] [{video_id}] [PULADO] Erro 429, ID sera registrado no txt de 429.",
+                    f">> [PERFIL {profile_id}] [{video_id}] [429] ID registrado no txt de 429; segue pendente para retentativa.",
                     flush=True,
                 )
+                # só registra para observação: o vídeo continua em pending_videos
                 rate_limited_ids.append(str(video_id).strip())
-                if row in pending_videos:
-                    pending_videos.remove(row)
                 continue
             elif proc.returncode == 3:
                 session_blocked = True
@@ -560,8 +559,6 @@ def main():
     synced_ids = root_sync.get_already_synced_youtube_ids()
 
     ids_429_path = config.get("DEFAULT", "ids_429", fallback="ids_429.txt")
-    known_429_ids = load_id_file(ids_429_path)
-    print(f"[INIT] IDs com 429 conhecidos em '{ids_429_path}': {len(known_429_ids)}")
 
     ids_foreign_path = config.get("DEFAULT", "ids_foreign", fallback="ids_foreign.txt")
     known_foreign_ids = load_id_file(ids_foreign_path)
@@ -577,7 +574,7 @@ def main():
         original_total,
         already_processed,
     ) = load_and_filter_csv(
-        target_csv, synced_ids, known_429_ids | known_foreign_ids
+        target_csv, synced_ids, known_foreign_ids
     )
 
     if not pending_records:
