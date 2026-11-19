@@ -14,6 +14,26 @@ import time
 import requests
 from storage_sync import StorageSyncManager, TranscriptRecord
 
+# Espera antes de reativar um worker bloqueado (cookie/sessao ou IP)
+BLOCK_COOLDOWN_SECONDS = 90 * 60
+# Arquivo-sinal criado pelo bot do Telegram (/stop) para pedir parada segura
+STOP_FILE = os.path.abspath("STOP_EXTRACTION")
+
+
+def stop_requested():
+    """Indica se o /stop foi acionado pelo Telegram."""
+    return os.path.exists(STOP_FILE)
+
+
+def interruptible_sleep(seconds):
+    """Espera em blocos curtos e retorna True se o stop for solicitado no meio."""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if stop_requested():
+            return True
+        time.sleep(min(10, max(0, deadline - time.time())))
+    return stop_requested()
+
 
 def load_configuration(conf_path):
     """Lê e valida o arquivo de configuração .conf."""
@@ -231,6 +251,48 @@ def persist_and_cleanup_video(
     shutil.rmtree(video_folder, ignore_errors=True)
 
 
+def run_downloader_with_block_retry(
+    cmd, work_dir, profile_id, video_id, cookie_name, bot_token, chat_id
+):
+    """
+    Roda o downloader. Em bloqueio (sessao ou IP), espera BLOCK_COOLDOWN_SECONDS
+    e tenta o mesmo video de novo. Retorna (proc, saida, interrompido, bloqueios).
+    """
+    blocks = 0
+    while True:
+        proc = subprocess.run(cmd, cwd=work_dir, capture_output=True, text=True)
+        combined_output = f"{proc.stdout}\n{proc.stderr}"
+        lowered = combined_output.lower()
+
+        if proc.returncode == 3:
+            reason = "Rate-limit de sessao do cookie"
+        elif proc.returncode == 1 and (
+            "bloqueio/rate-limit detectado" in lowered
+            or "falha critica" in lowered
+        ):
+            reason = "Bloqueio de IP/bot"
+        else:
+            return proc, combined_output, False, blocks
+
+        blocks += 1
+        wait_min = BLOCK_COOLDOWN_SECONDS // 60
+        print(
+            f">> [PERFIL {profile_id}] [{video_id}] [BLOQUEIO] {reason}."
+            f" Worker em espera por {wait_min} min.",
+            flush=True,
+        )
+        send_telegram_message(
+            f"*{reason} (Perfil {profile_id})*\n"
+            f"- Cookie: `{cookie_name}`\n"
+            f"- Video: `{video_id}`\n"
+            f"- Acao: worker em espera, volta em {wait_min} min.",
+            bot_token,
+            chat_id,
+        )
+        if interruptible_sleep(BLOCK_COOLDOWN_SECONDS):
+            return proc, combined_output, True, blocks
+
+
 def worker_process(
     profile_id,
     csv_slice,
@@ -279,14 +341,17 @@ def worker_process(
 
         pending_videos = rows.copy()
         extracted_videos = 0
-        block_detected = False
-        session_blocked = False
+        block_count = 0
+        stopped = False
         rate_limited_ids = []
         foreign_ids = []
         cookie_name = os.path.basename(cookie_path)
         abs_output_dir = os.path.abspath(output_dir)
 
         for idx, row in enumerate(rows, start=1):
+            if stop_requested():
+                stopped = True
+                break
             time.sleep(random.uniform(2, 6))  # pequena pausa para não dar merda
             video_id = row.get("Video_id") or row.get("video_id")
             if not video_id:
@@ -307,14 +372,15 @@ def worker_process(
                 raw_proxies=raw_proxies,
             )
 
-            proc = subprocess.run(
-                cmd,
-                cwd=work_dir,
-                capture_output=True,
-                text=True,
+            proc, combined_output, stopped, blocks = (
+                run_downloader_with_block_retry(
+                    cmd, work_dir, profile_id, video_id, cookie_name,
+                    bot_token, chat_id,
+                )
             )
-
-            combined_output = f"{proc.stdout}\n{proc.stderr}"
+            block_count += blocks
+            if stopped:
+                break
 
             # Filtra apenas eventos relevantes de rede/bloqueio emitidos pelo downloader
             for line in combined_output.splitlines():
@@ -390,38 +456,6 @@ def worker_process(
                 # só registra para observação: o vídeo continua em pending_videos
                 rate_limited_ids.append(str(video_id).strip())
                 continue
-            elif proc.returncode == 3:
-                session_blocked = True
-                print(
-                    f">> [PERFIL {profile_id}] [{video_id}] [COOKIE BLOQUEADO]"
-                    f" Rate-limit de sessao do YouTube (cookie '{cookie_name}')."
-                    " Worker encerrado.",
-                    flush=True,
-                )
-                session_msg = (
-                    f"*Cookie com Rate-limit de Sessao (Perfil {profile_id})*\n"
-                    f"- Cookie: `{cookie_name}`\n"
-                    f"- Video: `{video_id}`\n"
-                    "- Causa: sessao limitada pelo YouTube (ate ~1h); nao e"
-                    " bloqueio de IP.\n"
-                    "- Acao: Worker encerrado preventivamente."
-                )
-                send_telegram_message(session_msg, bot_token, chat_id)
-                break
-            else:
-                if (
-                    "bloqueio/rate-limit detectado" in combined_output.lower()
-                    or "falha critica" in combined_output.lower()
-                ):
-                    block_detected = True
-                    block_msg = (
-                        f"*Bloqueio Detectado (Perfil {profile_id})*\n"
-                        f"- Cookie: `{cookie_name}`\n"
-                        f"- Video: `{video_id}`\n"
-                        "- Acao: Worker encerrado preventivamente."
-                    )
-                    send_telegram_message(block_msg, bot_token, chat_id)
-                    break
 
         total_time = time.time() - start_time
         formatted_time = str(timedelta(seconds=int(total_time)))
@@ -431,12 +465,7 @@ def worker_process(
             "relatorios", f"relatorio_perfil_{profile_id}.txt"
         )
 
-        if session_blocked:
-            status_label = "BLOQUEADO (Cookie/Sessao)"
-        elif block_detected:
-            status_label = "BLOQUEADO (Bot Block)"
-        else:
-            status_label = "CONCLUIDO"
+        status_label = "INTERROMPIDO (/stop)" if stopped else "CONCLUIDO"
 
         report_content = (
             f"========================================\n"
@@ -448,6 +477,7 @@ def worker_process(
             f"Videos Pendentes/Restantes: {len(pending_videos)}\n"
             f"Videos com erro 429: {len(rate_limited_ids)}\n"
             f"Videos fora do idioma pt: {len(foreign_ids)}\n"
+            f"Bloqueios (espera de {BLOCK_COOLDOWN_SECONDS // 60} min): {block_count}\n"
             f"Status Final: {status_label}\n"
             f"Tempo de Execucao: {formatted_time}\n"
             f"========================================\n"
@@ -461,6 +491,7 @@ def worker_process(
             f"*Cookie:* `{cookie_name}`\n"
             f"*Sincronizados (S3 + DB):* {extracted_videos}/{len(rows)}\n"
             f"*Pendentes:* {len(pending_videos)}\n"
+            f"*Bloqueios:* {block_count}\n"
             f"*Tempo:* {formatted_time}\n"
             f"*Status:* {status_label}"
         )
@@ -472,7 +503,8 @@ def worker_process(
             "pending": pending_videos,
             "rate_limited": rate_limited_ids,
             "foreign": foreign_ids,
-            "blocked": block_detected or session_blocked,
+            "blocked": block_count > 0,
+            "stopped": stopped,
             "time": total_time,
             "fieldnames": headers,
         }
@@ -542,6 +574,10 @@ def main():
     chat_id = config.get("TELEGRAM", "chat_id", fallback="")
 
     global_start = time.time()
+
+    # remove sinal de parada de execucoes anteriores
+    if os.path.exists(STOP_FILE):
+        os.remove(STOP_FILE)
 
     cookie_files = sorted(glob.glob(os.path.join(cookies_dir, "*.txt")))
     if not cookie_files:
@@ -655,8 +691,10 @@ def main():
     new_foreign_ids = []
     total_extracted = 0
     total_blocks = 0
+    stopped_by_user = False
 
     for res in results:
+        stopped_by_user = stopped_by_user or res["stopped"]
         total_extracted += res["extracted"]
         all_unextracted.extend(res["pending"])
         new_429_ids.extend(res["rate_limited"])
@@ -717,11 +755,11 @@ def main():
         os.remove(filtered_csv_path)
 
     final_msg = (
-        f"*EXECUCAO PARALELA FINALIZADA*\n\n"
+        f"*{'EXECUCAO INTERROMPIDA (/stop)' if stopped_by_user else 'EXECUCAO PARALELA FINALIZADA'}*\n\n"
         f"*Modulos:* `{', '.join(active_modules)}`\n"
         f"*Total Sincronizados Nesta Sessao:* {total_extracted}\n"
         f"*Ainda Pendentes:* {len(all_unextracted)}\n"
-        f"*Contas Bloqueadas:* {total_blocks}/{num_cookies}\n"
+        f"*Contas que sofreram bloqueio:* {total_blocks}/{num_cookies}\n"
         f"*Tempo Total:* {overall_total_time}\n\n"
         "Os relatorios individuais e o resumo geral foram salvos na pasta"
         f" `{final_reports_dir}/`.\n"

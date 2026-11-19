@@ -10,7 +10,7 @@ import yt_dlp
 
 @dataclass
 class TranscriptRecord:
-    """Schema contendo os metadados de extração para phd_pipeline.transcript."""
+    """Schema contendo os metadados de extração para phd_pipeline.extraction."""
 
     youtube_video_id: str
     source_type: str  # 'YOUTUBE_MANUAL' ou 'YOUTUBE_AUTOMATIC'
@@ -53,7 +53,7 @@ class StorageSyncManager:
     def save_transcript_to_db(self, record: TranscriptRecord) -> int:
         """
         Busca o ID interno correspondente em phd_pipeline.video comparando
-        youtube_video_id e insere/atualiza o registro único em phd_pipeline.transcript.
+        youtube_video_id e insere/atualiza o registro único em phd_pipeline.extraction.
         """
         select_video_sql = """
             SELECT id
@@ -62,7 +62,7 @@ class StorageSyncManager:
         """
 
         upsert_transcript_sql = """
-            INSERT INTO phd_pipeline.transcript (
+            INSERT INTO phd_pipeline.extraction (
                 video_id,
                 source_type,
                 language_code,
@@ -160,10 +160,10 @@ class StorageSyncManager:
         return uploaded_files
 
     def get_already_synced_youtube_ids(self) -> set[str]:
-        """Consulta phd_pipeline.transcript + video para pular vídeos já sincronizados."""
+        """Consulta phd_pipeline.extraction + video para pular vídeos já sincronizados."""
         query = """
             SELECT DISTINCT v.youtube_video_id
-            FROM phd_pipeline.transcript t
+            FROM phd_pipeline.extraction t
             JOIN phd_pipeline.video v ON v.id = t.video_id;
         """
         conn = self._get_pg_connection()
