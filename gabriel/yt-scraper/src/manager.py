@@ -195,7 +195,7 @@ def persist_and_cleanup_video(
 ) -> None:
     """
     1. Envia dados brutos do vídeo para o bucket S3.
-    2. Registra metadados consolidados na tabela phd_pipeline.transcript no Postgres.
+    2. Registra metadados consolidados na tabela phd_pipeline.extraction no Postgres.
     3. Exclui a pasta local de dados brutos do vídeo.
     """
     video_folder = os.path.join(abs_output_dir, str(video_id))
@@ -218,22 +218,31 @@ def persist_and_cleanup_video(
         flush=True,
     )
 
-    modality_str = resolve_downloaded_modality_label(download_opts)
+    # Legenda só conta se o arquivo existe: o downloader pode não achar legenda em pt
+    # original (manual ou automática) e baixar o restante sem ela
+    subtitle_names = [
+        a["filename"].lower()
+        for a in uploaded_assets
+        if a["filename"].lower().endswith((".srt", ".vtt"))
+    ]
+    has_manual_sub = any(name.startswith("manual_") for name in subtitle_names)
+    source_type = (
+        "YOUTUBE_MANUAL"
+        if has_manual_sub
+        else "YOUTUBE_AUTOMATIC" if subtitle_names else None
+    )
+
+    modality_str = resolve_downloaded_modality_label(
+        {**download_opts, "subtitles": download_opts.get("subtitles") and bool(subtitle_names)}
+    )
     total_size_bytes = sum(a["size_bytes"] for a in uploaded_assets)
     bucket_prefix_key = f"data/{video_id}"
-
-    has_manual_sub = any(
-        a["filename"].lower().startswith("manual_")
-        and a["filename"].lower().endswith((".srt", ".vtt"))
-        for a in uploaded_assets
-    )
-    source_type = "YOUTUBE_MANUAL" if has_manual_sub else "YOUTUBE_AUTOMATIC"
 
     # Etapa 2: Registro único consolidado no Postgres
     record = TranscriptRecord(
         youtube_video_id=str(video_id),
         source_type=source_type,
-        language_code="pt",
+        language_code="pt" if source_type else None,
         file_format=modality_str,
         s3_bucket=uploaded_assets[0]["s3_bucket"],
         bucket_key=bucket_prefix_key,
@@ -345,6 +354,7 @@ def worker_process(
         stopped = False
         rate_limited_ids = []
         foreign_ids = []
+        undetermined_ids = []
         cookie_name = os.path.basename(cookie_path)
         abs_output_dir = os.path.abspath(output_dir)
 
@@ -448,6 +458,15 @@ def worker_process(
                 if row in pending_videos:
                     pending_videos.remove(row)
                 continue
+            elif proc.returncode == 7:
+                print(
+                    f">> [PERFIL {profile_id}] [{video_id}] [PULADO] Idioma indeterminado.",
+                    flush=True,
+                )
+                undetermined_ids.append(str(video_id).strip())
+                if row in pending_videos:
+                    pending_videos.remove(row)
+                continue
             elif proc.returncode == 5:
                 print(
                     f">> [PERFIL {profile_id}] [{video_id}] [429] ID registrado no txt de 429; segue pendente para retentativa.",
@@ -477,6 +496,7 @@ def worker_process(
             f"Videos Pendentes/Restantes: {len(pending_videos)}\n"
             f"Videos com erro 429: {len(rate_limited_ids)}\n"
             f"Videos fora do idioma pt: {len(foreign_ids)}\n"
+            f"Videos com idioma indeterminado: {len(undetermined_ids)}\n"
             f"Bloqueios (espera de {BLOCK_COOLDOWN_SECONDS // 60} min): {block_count}\n"
             f"Status Final: {status_label}\n"
             f"Tempo de Execucao: {formatted_time}\n"
@@ -503,6 +523,7 @@ def worker_process(
             "pending": pending_videos,
             "rate_limited": rate_limited_ids,
             "foreign": foreign_ids,
+            "undetermined": undetermined_ids,
             "blocked": block_count > 0,
             "stopped": stopped,
             "time": total_time,
@@ -602,6 +623,15 @@ def main():
         f"[INIT] IDs fora do idioma pt conhecidos em '{ids_foreign_path}':"
         f" {len(known_foreign_ids)}"
     )
+    # indeterminados ficam em arquivo próprio: apague o ID de lá para tentar de novo
+    ids_undetermined_path = config.get(
+        "DEFAULT", "ids_undetermined", fallback="ids_undetermined.txt"
+    )
+    known_undetermined_ids = load_id_file(ids_undetermined_path)
+    print(
+        f"[INIT] IDs com idioma indeterminado em '{ids_undetermined_path}':"
+        f" {len(known_undetermined_ids)}"
+    )
 
     (
         filtered_csv_path,
@@ -610,7 +640,7 @@ def main():
         original_total,
         already_processed,
     ) = load_and_filter_csv(
-        target_csv, synced_ids, known_foreign_ids
+        target_csv, synced_ids, known_foreign_ids | known_undetermined_ids
     )
 
     if not pending_records:
@@ -689,6 +719,7 @@ def main():
     all_unextracted = []
     new_429_ids = []
     new_foreign_ids = []
+    new_undetermined_ids = []
     total_extracted = 0
     total_blocks = 0
     stopped_by_user = False
@@ -699,6 +730,7 @@ def main():
         all_unextracted.extend(res["pending"])
         new_429_ids.extend(res["rate_limited"])
         new_foreign_ids.extend(res["foreign"])
+        new_undetermined_ids.extend(res["undetermined"])
         if res["blocked"]:
             total_blocks += 1
 
@@ -708,6 +740,11 @@ def main():
     print(
         f"[IDIOMA] {added_foreign} novo(s) ID(s) adicionado(s) a"
         f" '{ids_foreign_path}'."
+    )
+    added_undetermined = append_id_file(ids_undetermined_path, new_undetermined_ids)
+    print(
+        f"[IDIOMA] {added_undetermined} novo(s) ID(s) indeterminado(s) adicionado(s) a"
+        f" '{ids_undetermined_path}'."
     )
 
     final_pending_csv = "csv_not_extracted_final.csv"
@@ -741,6 +778,7 @@ def main():
         f"Total de videos que ainda faltam: {len(all_unextracted)}\n"
         f"Novos IDs com erro 429 registrados: {added_429}\n"
         f"Novos IDs fora do idioma pt registrados: {added_foreign}\n"
+        f"Novos IDs com idioma indeterminado registrados: {added_undetermined}\n"
         f"Contas/Cookies que sofreram bloqueio: {total_blocks}\n"
         f"Tempo total decorrido: {overall_total_time}\n"
         f"========================================\n"

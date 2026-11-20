@@ -128,6 +128,8 @@ def main():
         with conn.cursor() as cur:
             cur.execute(select_pending_sql)
             rows = cur.fetchall()
+        # encerra a transação de leitura antes da varredura demorada no S3
+        conn.commit()
 
         total = len(rows)
         print(f"[INIT] Registros com metadados pendentes encontrados: {total}")

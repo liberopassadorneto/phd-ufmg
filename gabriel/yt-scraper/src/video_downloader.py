@@ -45,6 +45,10 @@ class ForeignLanguageError(Exception):
     """Vídeo cujo idioma, segundo os metadados, não é português."""
 
 
+class UndeterminedLanguageError(Exception):
+    """Sem como confirmar o idioma (sem 'language' e sem faixa '-orig' única)."""
+
+
 PT_LANG = re.compile(r"^pt(-[a-z]+)?$", re.IGNORECASE)
 # Sem player_client: o cliente android devolve um 'language' diferente do padrão
 EXTRACTOR_ARGS = "youtube:skip=translated_subs"
@@ -228,10 +232,11 @@ def download_media(
         info = ydl.extract_info(url, download=False)
 
     verdict, language, pt_orig_key = resolve_language(info)
+    if verdict == "foreign":
+        raise ForeignLanguageError(f"idioma {language}")
     if verdict != "pt":
-        reason = f"idioma {language}" if language else f"idioma {verdict}"
-        raise ForeignLanguageError(reason)
-        
+        raise UndeterminedLanguageError(f"idioma {verdict}")
+
     def run_phase(options):
         """Executa uma etapa do yt-dlp sobre o info já extraído (sem nova extração)."""
         with yt_dlp.YoutubeDL(options) as ydl:
@@ -336,7 +341,7 @@ def process_video(
     proxy_list=None,
 ):
     """Função orquestradora que retorna 'SUCCESS', 'UNAVAILABLE', 'AGE_RESTRICTED',
-    'FOREIGN_LANGUAGE', 'RATE_LIMIT_429', 'BOT_BLOCK', 'SESSION_BLOCK' ou 'ERROR'."""
+    'FOREIGN_LANGUAGE', 'LANGUAGE_UNDETERMINED', 'RATE_LIMIT_429', 'BOT_BLOCK', 'SESSION_BLOCK' ou 'ERROR'."""
     global current_proxy_index
     current_proxy_index = load_proxy_index(cookies_dir)
     last_status = "BOT_BLOCK"
@@ -372,6 +377,11 @@ def process_video(
             shutil.rmtree(f"{output_dir}/{video_id}", ignore_errors=True)
             print(f"[{video_id}] Video fora do idioma pt ({e}). Pulando...")
             return "FOREIGN_LANGUAGE"
+
+        except UndeterminedLanguageError as e:
+            shutil.rmtree(f"{output_dir}/{video_id}", ignore_errors=True)
+            print(f"[{video_id}] Idioma indeterminado ({e}). Pulando...")
+            return "LANGUAGE_UNDETERMINED"
 
         except Exception as e:
             error_str = str(e).lower()
@@ -573,5 +583,7 @@ if __name__ == "__main__":
         sys.exit(5)
     elif status == "FOREIGN_LANGUAGE":
         sys.exit(6)
+    elif status == "LANGUAGE_UNDETERMINED":
+        sys.exit(7)
     elif status != "SUCCESS":
         sys.exit(1)

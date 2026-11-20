@@ -13,8 +13,8 @@ class TranscriptRecord:
     """Schema contendo os metadados de extração para phd_pipeline.extraction."""
 
     youtube_video_id: str
-    source_type: str  # 'YOUTUBE_MANUAL' ou 'YOUTUBE_AUTOMATIC'
-    language_code: str
+    source_type: Optional[str]  # 'YOUTUBE_MANUAL', 'YOUTUBE_AUTOMATIC' ou None (sem legenda)
+    language_code: Optional[str]  # None quando não há legenda
     file_format: str  # Ex: 'AUDIO,FRAMES,SUBS,THUMB'
     s3_bucket: str
     bucket_key: str  # Prefixo único no bucket: 'data/<youtube_video_id>'
@@ -171,7 +171,5 @@ class StorageSyncManager:
             with conn.cursor() as cur:
                 cur.execute(query)
                 return {row[0] for row in cur.fetchall()}
-        except Exception:
-            return set()
         finally:
             conn.close()

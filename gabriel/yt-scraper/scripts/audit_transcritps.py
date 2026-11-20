@@ -42,9 +42,12 @@ CSV_FIELDS = [
     "bucket_key",
     "error",
 ]
+# Status que podem ser apagados; PORTUGUES nunca entra
+DELETABLE_STATUSES = ("ESTRANGEIRO", "INDETERMINADO", "ERRO")
 AUDIT_FIELDS = [
     "timestamp",
     "video_id",
+    "status",
     "language",
     "s3_bucket",
     "bucket_key",
@@ -265,8 +268,10 @@ def delete_keys(s3, bucket, keys):
 
 
 def delete_phase(latest_rows, s3, conn, args, default_bucket=""):
-    """Apaga do bucket e do banco os vídeos ESTRANGEIROS (dry-run, salvo com --apply)."""
-    foreign_rows = [r for r in latest_rows.values() if r["status"] == "ESTRANGEIRO"]
+    """Apaga do bucket e do banco os vídeos com status em --delete-statuses (dry-run, salvo com --apply)."""
+    foreign_rows = [
+        r for r in latest_rows.values() if r["status"] in args.delete_statuses
+    ]
 
     plan = []
     for row in foreign_rows:
@@ -282,12 +287,16 @@ def delete_phase(latest_rows, s3, conn, args, default_bucket=""):
         plan.append((row, bucket, keys))
 
     total_objects = sum(len(keys) for _, _, keys in plan)
+    by_status = dict(Counter(row["status"] for row, _, _ in plan))
     print(
-        f"\n[PLANO] Estrangeiros a apagar: {len(plan)} video(s),"
+        f"\n[PLANO] A apagar: {len(plan)} video(s) {by_status},"
         f" {total_objects} objeto(s) no bucket + registros no banco."
     )
     for row, _, keys in plan[:20]:
-        print(f"  {row['video_id']} ({row['language']}): {len(keys)} objeto(s)")
+        print(
+            f"  {row['video_id']} ({row['status']}/{row['language']}):"
+            f" {len(keys)} objeto(s)"
+        )
     if len(plan) > 20:
         print(f"  ... e mais {len(plan) - 20}")
 
@@ -336,6 +345,7 @@ def delete_phase(latest_rows, s3, conn, args, default_bucket=""):
                 {
                     "timestamp": datetime.now().isoformat(timespec="seconds"),
                     "video_id": video_id,
+                    "status": row["status"],
                     "language": row["language"],
                     "s3_bucket": bucket,
                     "bucket_key": row["bucket_key"],
@@ -345,7 +355,7 @@ def delete_phase(latest_rows, s3, conn, args, default_bucket=""):
             )
             f.flush()
             deleted += 1
-            print(f"[APAGADO] {video_id} ({row['language']})", flush=True)
+            print(f"[APAGADO] {video_id} ({row['status']})", flush=True)
 
     print(f"\n[FIM] {deleted}/{len(plan)} video(s) apagados. Auditoria em '{args.audit}'.")
 
@@ -375,6 +385,18 @@ def main():
         "--limit", type=int, default=0, help="Classifica no maximo N videos (teste)"
     )
     parser.add_argument(
+        "--delete-statuses",
+        default="ESTRANGEIRO",
+        help="Status a apagar, separados por virgula, entre "
+        + ",".join(DELETABLE_STATUSES)
+        + " (padrao: ESTRANGEIRO). PORTUGUES nunca e apagado.",
+    )
+    parser.add_argument(
+        "--only-delete",
+        action="store_true",
+        help="Nao classifica: apaga a partir da planilha --output (ex.: a final, unificada)",
+    )
+    parser.add_argument(
         "--apply", action="store_true", help="Apaga de verdade (padrao: dry-run)"
     )
     parser.add_argument(
@@ -384,6 +406,16 @@ def main():
 
     if args.shard:
         parse_shard(args.shard)
+
+    args.delete_statuses = {
+        status.strip().upper() for status in args.delete_statuses.split(",") if status.strip()
+    }
+    invalid = args.delete_statuses - set(DELETABLE_STATUSES)
+    if invalid or not args.delete_statuses:
+        raise SystemExit(
+            f"[ERRO] --delete-statuses invalido {sorted(invalid)}."
+            f" Use valores entre {list(DELETABLE_STATUSES)}."
+        )
 
     if args.output is None:
         args.output = resolve_shard_csv_path("audit_transcripts.csv", args.shard)
@@ -397,10 +429,20 @@ def main():
     conn = connect_postgres(config)
     try:
         db_rows = filter_shard(fetch_extractions(conn), args.shard)
-        completed = classify_phase(db_rows, args)
+        completed = True if args.only_delete else classify_phase(db_rows, args)
 
         latest_rows = load_latest_rows(args.output)
         print("\n[RESUMO] Planilha:", dict(Counter(r["status"] for r in latest_rows.values())))
+        unclassified = [
+            r["youtube_video_id"]
+            for r in db_rows
+            if r["youtube_video_id"] not in latest_rows
+        ]
+        if unclassified:
+            print(
+                f"[AVISO] {len(unclassified)} video(s) do banco nao estao na planilha"
+                " (nao classificados): nenhum deles sera apagado."
+            )
 
         if not completed:
             print(
