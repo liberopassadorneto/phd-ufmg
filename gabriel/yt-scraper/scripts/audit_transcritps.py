@@ -259,19 +259,16 @@ def list_keys(s3, bucket, prefix):
 
 
 def delete_keys(s3, bucket, keys):
-    """Apaga as chaves em lotes de 1000 e levanta erro se alguma falhar."""
-    for start in range(0, len(keys), 1000):
-        batch = [{"Key": key} for key in keys[start : start + 1000]]
-        response = s3.delete_objects(Bucket=bucket, Delete={"Objects": batch})
-        if response.get("Errors"):
-            raise RuntimeError(f"falha ao apagar objetos: {response['Errors'][:3]}")
-
-
-def delete_keys(s3, bucket, keys):
     """Apaga as chaves individualmente via DeleteObject (compatível com S3 sem bulk delete)."""
     for key in keys:
         s3.delete_object(Bucket=bucket, Key=key)
 
+
+def delete_phase(latest_rows, s3, conn, args, default_bucket=""):
+    """Apaga do bucket e do banco os vídeos com status em --delete-statuses (dry-run, salvo com --apply)."""
+    foreign_rows = [
+        r for r in latest_rows.values() if r["status"] in args.delete_statuses
+    ]
     plan = []
     for row in foreign_rows:
         video_id = row["video_id"]
