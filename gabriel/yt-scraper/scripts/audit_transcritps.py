@@ -267,11 +267,10 @@ def delete_keys(s3, bucket, keys):
             raise RuntimeError(f"falha ao apagar objetos: {response['Errors'][:3]}")
 
 
-def delete_phase(latest_rows, s3, conn, args, default_bucket=""):
-    """Apaga do bucket e do banco os vídeos com status em --delete-statuses (dry-run, salvo com --apply)."""
-    foreign_rows = [
-        r for r in latest_rows.values() if r["status"] in args.delete_statuses
-    ]
+def delete_keys(s3, bucket, keys):
+    """Apaga as chaves individualmente via DeleteObject (compatível com S3 sem bulk delete)."""
+    for key in keys:
+        s3.delete_object(Bucket=bucket, Key=key)
 
     plan = []
     for row in foreign_rows:
