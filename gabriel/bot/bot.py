@@ -12,7 +12,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-PROJECT_DIR = "/home/marcele_araponga/phd-ufmg/yt-scraper"
+PROJECT_DIR = "/home/marcele_araponga/phd-ufmg/gabriel/yt-scraper"
 
 # Ler o token e configurações do config.conf do projeto (mesmo usado pelo manager)
 config = configparser.ConfigParser()
