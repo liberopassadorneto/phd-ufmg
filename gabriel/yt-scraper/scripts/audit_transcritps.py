@@ -12,10 +12,12 @@ import boto3
 import psycopg2
 import psycopg2.extras
 
-from video_downloader import fetch_video_info, resolve_language
+from video_downloader import BotBlockError, fetch_video_info, resolve_language
 
 TABLE = "phd_pipeline.extraction"
 VIDEO_TABLE = "phd_pipeline.video"
+# Falhas seguidas (qualquer tipo) que indicam bloqueio ou rede fora: para a busca
+MAX_CONSECUTIVE_ERRORS = 5
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 REQUIRED_COLUMNS = {"youtube_video_id", "s3_bucket", "bucket_key"}
 CSV_FIELDS = [
@@ -117,7 +119,11 @@ def fetch_extractions(conn):
 
 
 def classify_phase(db_rows, args):
-    """Classifica o idioma (legenda automática original) de cada vídeo do banco, retomável."""
+    """
+    Classifica o idioma de cada vídeo do banco, gravando uma linha por vídeo na
+    planilha (retomável). Retorna False se parou antes do fim por bloqueio do
+    YouTube ou por falhas seguidas; o vídeo bloqueado fica pendente.
+    """
     done_ids = load_done_ids(args.output)
     pending = [r for r in db_rows if r["youtube_video_id"] not in done_ids]
     if args.limit:
@@ -133,6 +139,7 @@ def classify_phase(db_rows, args):
         if is_new_file:
             writer.writeheader()
 
+        consecutive_errors = 0
         for idx, row in enumerate(pending, start=1):
             video_id = row["youtube_video_id"]
             record = {
@@ -157,13 +164,31 @@ def classify_phase(db_rows, args):
                         if k.endswith("-orig")
                     ),
                 )
+                consecutive_errors = 0
+            except BotBlockError:
+                # não grava a linha: o vídeo continua pendente na próxima execução
+                print(
+                    f"\n[BLOQUEIO] {video_id}: YouTube pediu confirmacao de bot."
+                    f" Busca interrompida; faltam {len(pending) - idx + 1} video(s)."
+                )
+                return False
             except Exception as e:
                 record.update(status="ERRO", error=repr(e)[:200])
+                consecutive_errors += 1
 
             writer.writerow(record)
             f.flush()
             print(f"[{idx}/{len(pending)}] {video_id}: {record['status']}", flush=True)
+
+            if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                print(
+                    f"\n[INTERROMPIDO] {consecutive_errors} erros seguidos"
+                    f" (ultimo: {record['error']}). Faltam {len(pending) - idx} video(s)."
+                )
+                return False
             time.sleep(random.uniform(args.delay * 0.5, args.delay * 1.5))
+
+    return True
 
 
 def load_latest_rows(csv_path):
@@ -292,7 +317,7 @@ def main():
     parser.add_argument("--proxy", default="", help="Ex.: socks5h://127.0.0.1:1080")
     parser.add_argument("--cookies", default="", help="Arquivo de cookies Netscape")
     parser.add_argument(
-        "--delay", type=float, default=2.0, help="Pausa media entre videos (s)"
+        "--delay", type=float, default=3.0, help="Pausa media entre videos (s)"
     )
     parser.add_argument(
         "--limit", type=int, default=0, help="Classifica no maximo N videos (teste)"
@@ -312,10 +337,18 @@ def main():
     conn = connect_postgres(config)
     try:
         db_rows = fetch_extractions(conn)
-        classify_phase(db_rows, args)
+        completed = classify_phase(db_rows, args)
 
         latest_rows = load_latest_rows(args.output)
         print("\n[RESUMO] Planilha:", dict(Counter(r["status"] for r in latest_rows.values())))
+
+        if not completed:
+            print(
+                "\n[PAUSADO] Classificacao incompleta e nada foi apagado. O progresso"
+                " esta salvo: rode o mesmo comando para continuar de onde parou"
+                " (a quarentena do IP costuma durar ~2h; ou troque --proxy/--cookies)."
+            )
+            return
 
         s3 = connect_s3(config)
         delete_phase(

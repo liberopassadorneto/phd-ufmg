@@ -50,8 +50,18 @@ PT_LANG = re.compile(r"^pt(-[a-z]+)?$", re.IGNORECASE)
 EXTRACTOR_ARGS = "youtube:skip=translated_subs"
 
 
+class BotBlockError(RuntimeError):
+    """O YouTube bloqueou a consulta (IP ou sessão sinalizados como bot)."""
+
+
+BOT_BLOCK_INDICATORS = (
+    "sign in to confirm you're not a bot",
+    "sign in to confirm you’re not a bot",
+)
+
+
 def fetch_video_info(video_id, proxy=None, cookiefile=None):
-    """Busca os metadados do vídeo (JSON do yt-dlp). Levanta RuntimeError se falhar."""
+    """Busca os metadados do vídeo (JSON do yt-dlp). Levanta BotBlockError em bloqueio e RuntimeError nas demais falhas."""
     url = f"https://www.youtube.com/watch?v={video_id}"
     command = [
         "yt-dlp",
@@ -68,7 +78,10 @@ def fetch_video_info(video_id, proxy=None, cookiefile=None):
 
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip()[-200:] or "yt-dlp falhou")
+        stderr = result.stderr.strip()
+        if any(indicator in stderr.lower() for indicator in BOT_BLOCK_INDICATORS):
+            raise BotBlockError(stderr[-200:])
+        raise RuntimeError(stderr[-200:] or "yt-dlp falhou")
     return json.loads(result.stdout)
 
 
