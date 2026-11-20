@@ -4,13 +4,20 @@ import configparser
 import csv
 from datetime import datetime
 import os
+from pathlib import Path
 import random
 import re
+import sys
 import time
 
 import boto3
 import psycopg2
 import psycopg2.extras
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 from video_downloader import BotBlockError, fetch_video_info, resolve_language
 
@@ -19,6 +26,7 @@ VIDEO_TABLE = "phd_pipeline.video"
 # Falhas seguidas (qualquer tipo) que indicam bloqueio ou rede fora: para a busca
 MAX_CONSECUTIVE_ERRORS = 5
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+SHARD_PATTERN = re.compile(r"^(\d+)/(\d+)$")
 REQUIRED_COLUMNS = {"youtube_video_id", "s3_bucket", "bucket_key"}
 CSV_FIELDS = [
     "video_id",
@@ -43,6 +51,43 @@ AUDIT_FIELDS = [
     "objects_deleted",
     "db_rows_deleted",
 ]
+
+
+def parse_shard(shard_spec: str) -> tuple[int, int]:
+    """Valida e converte '--shard K/N' em (indice_1_based, total_shards)."""
+    match = SHARD_PATTERN.match(shard_spec.strip())
+    if not match:
+        raise SystemExit(
+            f"[ERRO] Formato de --shard invalido: '{shard_spec}'. Use K/N (ex.: 1/2)."
+        )
+    shard_idx = int(match.group(1))
+    shard_total = int(match.group(2))
+    if shard_total < 1 or not (1 <= shard_idx <= shard_total):
+        raise SystemExit(
+            f"[ERRO] --shard fora do intervalo valido (1 <= K <= N): '{shard_spec}'."
+        )
+    return shard_idx, shard_total
+
+
+def filter_shard(db_rows: list[dict], shard_spec: str) -> list[dict]:
+    """Filtra deterministicamente a fatia correspondente ao shard K/N."""
+    if not shard_spec:
+        return db_rows
+    shard_idx, shard_total = parse_shard(shard_spec)
+    return [
+        row
+        for idx, row in enumerate(db_rows)
+        if idx % shard_total == (shard_idx - 1)
+    ]
+
+
+def resolve_shard_csv_path(base_path: str, shard_spec: str) -> str:
+    """Adiciona sufixo '_shardKofN' ao CSV padrão para evitar colisão entre processos."""
+    if not shard_spec:
+        return base_path
+    shard_idx, shard_total = parse_shard(shard_spec)
+    path = Path(base_path)
+    return str(path.with_name(f"{path.stem}_shard{shard_idx}of{shard_total}{path.suffix}"))
 
 
 def classify(info):
@@ -94,13 +139,14 @@ def connect_s3(config):
 
 
 def fetch_extractions(conn):
-    """Lê os vídeos já extraídos (um registro por youtube_video_id)."""
+    """Lê os vídeos já extraídos ordenados deterministicamente por youtube_video_id."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             f"""
             SELECT v.youtube_video_id, e.*
             FROM {TABLE} e
             JOIN {VIDEO_TABLE} v ON v.id = e.video_id
+            ORDER BY v.youtube_video_id ASC
             """
         )
         rows = cur.fetchall()
@@ -128,8 +174,9 @@ def classify_phase(db_rows, args):
     pending = [r for r in db_rows if r["youtube_video_id"] not in done_ids]
     if args.limit:
         pending = pending[: args.limit]
+    shard_label = f" | shard: {args.shard}" if args.shard else ""
     print(
-        f"[INIT] Registros no banco: {len(db_rows)} | ja classificados:"
+        f"[INIT]{shard_label} Registros na fatia: {len(db_rows)} | ja classificados:"
         f" {len(done_ids)} | pendentes: {len(pending)}"
     )
 
@@ -309,10 +356,15 @@ def main():
     )
     parser.add_argument("--conf", default="config.conf", help="Arquivo .conf")
     parser.add_argument(
-        "--output", default="audit_transcripts.csv", help="Planilha CSV de analise"
+        "--output", default=None, help="Planilha CSV de analise"
     )
     parser.add_argument(
-        "--audit", default="audit_deleted.csv", help="CSV com o registro do que foi apagado"
+        "--audit", default=None, help="CSV com o registro do que foi apagado"
+    )
+    parser.add_argument(
+        "--shard",
+        default="",
+        help="Fatia paralela K/N (ex.: 1/2, 2/2). Separa os CSVs automaticamente.",
     )
     parser.add_argument("--proxy", default="", help="Ex.: socks5h://127.0.0.1:1080")
     parser.add_argument("--cookies", default="", help="Arquivo de cookies Netscape")
@@ -330,13 +382,21 @@ def main():
     )
     args = parser.parse_args()
 
+    if args.shard:
+        parse_shard(args.shard)
+
+    if args.output is None:
+        args.output = resolve_shard_csv_path("audit_transcripts.csv", args.shard)
+    if args.audit is None:
+        args.audit = resolve_shard_csv_path("audit_deleted.csv", args.shard)
+
     config = configparser.ConfigParser()
     if not config.read(args.conf):
         raise SystemExit(f"[ERRO] Arquivo de configuracao nao encontrado: {args.conf}")
 
     conn = connect_postgres(config)
     try:
-        db_rows = fetch_extractions(conn)
+        db_rows = filter_shard(fetch_extractions(conn), args.shard)
         completed = classify_phase(db_rows, args)
 
         latest_rows = load_latest_rows(args.output)
