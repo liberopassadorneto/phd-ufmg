@@ -228,11 +228,10 @@ def download_media(
         info = ydl.extract_info(url, download=False)
 
     verdict, language, pt_orig_key = resolve_language(info)
-    if verdict == "foreign":
-        raise ForeignLanguageError(f"idioma {language}")
-    if verdict == "ambiguous":
-        raise ForeignLanguageError("varias faixas '-orig' sem idioma declarado")
-
+    if verdict != "pt":
+        reason = f"idioma {language}" if language else f"idioma {verdict}"
+        raise ForeignLanguageError(reason)
+        
     def run_phase(options):
         """Executa uma etapa do yt-dlp sobre o info já extraído (sem nova extração)."""
         with yt_dlp.YoutubeDL(options) as ydl:
