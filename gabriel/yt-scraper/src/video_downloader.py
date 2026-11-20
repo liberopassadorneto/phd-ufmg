@@ -46,7 +46,8 @@ class ForeignLanguageError(Exception):
 
 
 PT_LANG = re.compile(r"^pt(-[a-z]+)?$", re.IGNORECASE)
-EXTRACTOR_ARGS = "youtube:player_client=android;skip=translated_subs"
+# Sem player_client: o cliente android devolve um 'language' diferente do padrão
+EXTRACTOR_ARGS = "youtube:skip=translated_subs"
 
 
 def fetch_video_info(video_id, proxy=None, cookiefile=None):

@@ -23,6 +23,8 @@ CSV_FIELDS = [
     "status",
     "language",
     "has_pt_orig",
+    "declared_language",
+    "orig_tracks",
     "source_type",
     "file_format",
     "size_bytes",
@@ -145,7 +147,15 @@ def classify_phase(db_rows, args):
                 info = fetch_video_info(video_id, args.proxy, args.cookies)
                 status, language, has_pt_orig = classify(info)
                 record.update(
-                    status=status, language=language, has_pt_orig=has_pt_orig
+                    status=status,
+                    language=language,
+                    has_pt_orig=has_pt_orig,
+                    # evidências usadas na decisão, para conferir classificações
+                    declared_language=info.get("language") or "",
+                    orig_tracks=",".join(
+                        k for k in (info.get("automatic_captions") or {})
+                        if k.endswith("-orig")
+                    ),
                 )
             except Exception as e:
                 record.update(status="ERRO", error=repr(e)[:200])
