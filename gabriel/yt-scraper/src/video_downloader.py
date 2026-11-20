@@ -1,6 +1,8 @@
 import argparse
 import glob
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -43,41 +45,83 @@ class ForeignLanguageError(Exception):
     """Vídeo cujo idioma, segundo os metadados, não é português."""
 
 
-def check_subtitles_availability(video_id, proxy=None, cookiefile=None):
-    """
-    Verifica quais tipos de legenda em português (manual e/ou automática)
-    estão disponíveis para o vídeo. Retorna um dicionário com booleans.
-    """
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    available = {"manual": False, "automatic": False}
+PT_LANG = re.compile(r"^pt(-[a-z]+)?$", re.IGNORECASE)
+EXTRACTOR_ARGS = "youtube:player_client=android;skip=translated_subs"
 
-    command = ["yt-dlp", "--list-subs"]
+
+def fetch_video_info(video_id, proxy=None, cookiefile=None):
+    """Busca os metadados do vídeo (JSON do yt-dlp). Levanta RuntimeError se falhar."""
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    command = [
+        "yt-dlp",
+        "--skip-download",
+        "--dump-single-json",
+        "--extractor-args",
+        EXTRACTOR_ARGS,
+    ]
     if cookiefile and os.path.exists(cookiefile):
         command.extend(["--cookies", cookiefile])
     if proxy:
         command.extend(["--proxy", proxy])
     command.append(url)
 
-    try:
-        result = subprocess.check_output(
-            command, stderr=subprocess.STDOUT, universal_newlines=True
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip()[-200:] or "yt-dlp falhou")
+    return json.loads(result.stdout)
+
+
+def resolve_language(info):
+    """
+    Decide o idioma do vídeo. Critério principal: o 'language' declarado; só sem
+    ele vale a faixa automática da fala original ('-orig'), e apenas se for única
+    (vídeos e shorts costumam ter várias faixas '-orig').
+
+    Retorna (verdict, language, pt_orig_key):
+    - verdict: 'pt', 'foreign', 'ambiguous' (várias '-orig' sem language) ou 'unknown'
+    - pt_orig_key: faixa automática original em português (ex.: 'pt-orig') ou None
+    """
+    declared = (info.get("language") or "").lower()
+    auto_tracks = info.get("automatic_captions") or {}
+    orig_keys = [k for k in auto_tracks if k.endswith("-orig")]
+    pt_orig_key = next((k for k in orig_keys if k.lower().startswith("pt")), None)
+
+    if declared:
+        verdict = "pt" if declared.startswith("pt") else "foreign"
+        return verdict, declared, pt_orig_key
+    if len(orig_keys) == 1:
+        verdict = "pt" if pt_orig_key else "foreign"
+        return verdict, orig_keys[0][: -len("-orig")], pt_orig_key
+    if len(orig_keys) > 1:
+        return "ambiguous", "", pt_orig_key
+    return "unknown", "", None
+
+
+def select_portuguese_subtitle(info, video_id, pt_orig_key):
+    """
+    Define qual legenda em português baixar: manual em pt ou a automática da fala
+    original em pt (pt_orig_key). Legenda automática 'pt' sem '-orig' é tradução
+    do YouTube e é ignorada.
+
+    Retorna {"manual": bool, "automatic": bool, "lang": str | None}.
+    """
+    available = {"manual": False, "automatic": False, "lang": None}
+    manual_pt = [lang for lang in (info.get("subtitles") or {}) if PT_LANG.match(lang)]
+
+    if manual_pt:
+        available["manual"] = True
+        available["lang"] = next(
+            (lang for lang in ("pt", "pt-BR", "pt-PT") if lang in manual_pt),
+            manual_pt[0],
         )
-        output = result.lower()
-        if "available subtitles" in output:
-            parts = output.split("available subtitles")
-            manual_section = (
-                parts[1].split("available automatic captions")[0]
-                if "available automatic captions" in parts[1]
-                else parts[1]
-            )
-            if "pt" in manual_section or "portuguese" in manual_section:
-                available["manual"] = True
-        if "available automatic captions" in output:
-            auto_section = output.split("available automatic captions")[1]
-            if "pt" in auto_section or "portuguese" in auto_section:
-                available["automatic"] = True
-    except subprocess.CalledProcessError:
-        pass
+    elif pt_orig_key:
+        available["automatic"] = True
+        available["lang"] = pt_orig_key
+    elif "pt" in (info.get("automatic_captions") or {}):
+        print(
+            f"[{video_id}] Aviso: legenda automatica 'pt' sem faixa '-orig'"
+            " (provavel traducao ou yt-dlp antigo). Ignorada."
+        )
 
     return available
 
@@ -149,26 +193,6 @@ def download_media(
     )
     temp_cookie_path = prepare_cookies_file(cookies_dir)
 
-    detected = {}
-
-    def language_filter(info, *, incomplete):
-        """
-        Usa o 'language' da própria extração do yt-dlp (sem chamada extra).
-        Retornar uma mensagem faz o yt-dlp pular o download desse vídeo.
-        """
-        language = (info.get("language") or "").lower()
-        if language and not language.startswith("pt"):
-            detected["language"] = language
-            return f"idioma {language}"
-        return None
-
-    def run_phase(options):
-        """Executa uma etapa do yt-dlp e interrompe se o vídeo não for em pt."""
-        with yt_dlp.YoutubeDL(options) as ydl:
-            ydl.download([url])
-        if "language" in detected:
-            raise ForeignLanguageError(detected["language"])
-
     base_ydl_opts = {
         "outtmpl": f"{base_dir}/%(id)s.%(ext)s",
         "quiet": True,
@@ -180,24 +204,39 @@ def download_media(
         "remote_components": "ejs:github",
         "retries": 2,
         "socket_timeout": 15,
-        "match_filter": language_filter,
     }
 
     if target_proxy:
         base_ydl_opts["proxy"] = target_proxy
 
+    # Única extração do vídeo: todas as etapas abaixo reaproveitam este info
+    with yt_dlp.YoutubeDL(base_ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+
+    verdict, language, pt_orig_key = resolve_language(info)
+    if verdict == "foreign":
+        raise ForeignLanguageError(f"idioma {language}")
+    if verdict == "ambiguous":
+        raise ForeignLanguageError("varias faixas '-orig' sem idioma declarado")
+
+    def run_phase(options):
+        """Executa uma etapa do yt-dlp sobre o info já extraído (sem nova extração)."""
+        with yt_dlp.YoutubeDL(options) as ydl:
+            ydl.process_ie_result(
+                yt_dlp.YoutubeDL.sanitize_info(info, remove_private_keys=True),
+                download=True,
+            )
+
     # Legendas
     if download_subtitles:
-        subs_status = check_subtitles_availability(
-            video_id, target_proxy, cookiefile=temp_cookie_path
-        )
-        if any(subs_status.values()):
+        subs_status = select_portuguese_subtitle(info, video_id, pt_orig_key)
+        if subs_status["manual"] or subs_status["automatic"]:
             sub_options = base_ydl_opts.copy()
             sub_options.update({
                 "skip_download": True,
                 "writesubtitles": subs_status["manual"],
                 "writeautomaticsub": subs_status["automatic"],
-                "subtitleslangs": ["pt"],
+                "subtitleslangs": [subs_status["lang"]],
                 "subtitlesformat": "srt",
             })
             run_phase(sub_options)

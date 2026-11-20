@@ -12,9 +12,10 @@ import boto3
 import psycopg2
 import psycopg2.extras
 
-from classify_language import classify, fetch_info, load_done_ids
+from video_downloader import fetch_video_info, resolve_language
 
-TABLE = "phd_pipeline.transcript"
+TABLE = "phd_pipeline.extraction"
+VIDEO_TABLE = "phd_pipeline.video"
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 REQUIRED_COLUMNS = {"youtube_video_id", "s3_bucket", "bucket_key"}
 CSV_FIELDS = [
@@ -38,6 +39,26 @@ AUDIT_FIELDS = [
     "objects_deleted",
     "db_rows_deleted",
 ]
+
+
+def classify(info):
+    """
+    Classifica com o mesmo critério do video_downloader (language declarado e,
+    sem ele, faixa '-orig' única). Retorna (status, language, has_pt_orig).
+    Casos ambíguos ou sem informação ficam INDETERMINADO e nunca são apagados.
+    """
+    verdict, language, pt_orig_key = resolve_language(info)
+    status = {"pt": "PORTUGUES", "foreign": "ESTRANGEIRO"}.get(verdict, "INDETERMINADO")
+    return status, language, pt_orig_key is not None
+
+
+def load_done_ids(csv_path):
+    """IDs já classificados na planilha, exceto os com ERRO (que são refeitos)."""
+    return {
+        video_id
+        for video_id, row in load_latest_rows(csv_path).items()
+        if row["status"] != "ERRO"
+    }
 
 
 def connect_postgres(config):
@@ -68,10 +89,16 @@ def connect_s3(config):
     )
 
 
-def fetch_transcripts(conn):
-    """Lê os vídeos já baixados (um registro por youtube_video_id)."""
+def fetch_extractions(conn):
+    """Lê os vídeos já extraídos (um registro por youtube_video_id)."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(f"SELECT * FROM {TABLE}")
+        cur.execute(
+            f"""
+            SELECT v.youtube_video_id, e.*
+            FROM {TABLE} e
+            JOIN {VIDEO_TABLE} v ON v.id = e.video_id
+            """
+        )
         rows = cur.fetchall()
 
     if rows:
@@ -88,7 +115,7 @@ def fetch_transcripts(conn):
 
 
 def classify_phase(db_rows, args):
-    """Classifica o idioma de cada vídeo do banco e grava a planilha (retomável)."""
+    """Classifica o idioma (legenda automática original) de cada vídeo do banco, retomável."""
     done_ids = load_done_ids(args.output)
     pending = [r for r in db_rows if r["youtube_video_id"] not in done_ids]
     if args.limit:
@@ -115,7 +142,7 @@ def classify_phase(db_rows, args):
                 "bucket_key": row.get("bucket_key", ""),
             }
             try:
-                info = fetch_info(video_id, args.proxy, args.cookies)
+                info = fetch_video_info(video_id, args.proxy, args.cookies)
                 status, language, has_pt_orig = classify(info)
                 record.update(
                     status=status, language=language, has_pt_orig=has_pt_orig
@@ -203,14 +230,20 @@ def delete_phase(latest_rows, s3, conn, args, default_bucket=""):
         for row, bucket, keys in plan:
             video_id = row["video_id"]
             try:
-                # bucket primeiro: se falhar, o registro do banco é mantido
-                delete_keys(s3, bucket, keys)
+                # banco primeiro, sem commit: se falhar (ex.: FK de content_screening)
+                # o bucket não é tocado; se o bucket falhar, o rollback mantém o banco
                 with conn.cursor() as cur:
                     cur.execute(
-                        f"DELETE FROM {TABLE} WHERE youtube_video_id = %s",
+                        f"""
+                        DELETE FROM {TABLE}
+                        WHERE video_id = (
+                            SELECT id FROM {VIDEO_TABLE} WHERE youtube_video_id = %s
+                        )
+                        """,
                         (video_id,),
                     )
                     db_rows_deleted = cur.rowcount
+                delete_keys(s3, bucket, keys)
                 conn.commit()
             except Exception as e:
                 conn.rollback()
@@ -249,7 +282,7 @@ def main():
     parser.add_argument("--proxy", default="", help="Ex.: socks5h://127.0.0.1:1080")
     parser.add_argument("--cookies", default="", help="Arquivo de cookies Netscape")
     parser.add_argument(
-        "--delay", type=float, default=3.0, help="Pausa media entre videos (s)"
+        "--delay", type=float, default=2.0, help="Pausa media entre videos (s)"
     )
     parser.add_argument(
         "--limit", type=int, default=0, help="Classifica no maximo N videos (teste)"
@@ -268,7 +301,7 @@ def main():
 
     conn = connect_postgres(config)
     try:
-        db_rows = fetch_transcripts(conn)
+        db_rows = fetch_extractions(conn)
         classify_phase(db_rows, args)
 
         latest_rows = load_latest_rows(args.output)
