@@ -1,0 +1,10 @@
+.venv/
+src/audios/
+src/audios_temp/
+src/legendas/
+src/videos_verificados.jsonl
+src/sem_audio.txt
+__pycache__/
+*.jsonl
+*.csv
+*.png
