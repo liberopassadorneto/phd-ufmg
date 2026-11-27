@@ -1,0 +1,731 @@
+\documentclass[12pt, a4paper]{article}
+
+\usepackage{lmodern}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage[obeyspaces]{url}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{upquote} % Aspas retas em código e blocos verbatim
+\usepackage{titlesec}
+\usepackage[brazil]{babel}
+\usepackage{graphicx} % Para inserção de imagens
+\usepackage{booktabs} % Para tabelas de alta qualidade
+\usepackage{tabularx} % Para tabelas com larguras dinâmicas
+\usepackage{longtable} % Para tabelas longas que quebram de página
+\usepackage{float}    % Para forçar o posicionamento de imagens/tabelas
+\usepackage{tikz}     % Para os diagramas do fluxo
+\usetikzlibrary{arrows.meta, positioning, shapes.geometric}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\usepackage{tocloft}
+\renewcommand{\cfttoctitlefont}{\large\bfseries\color{piblue}}
+\setlength{\cftbeforetoctitleskip}{0.4cm}
+\setlength{\cftaftertoctitleskip}{0.3cm}
+\setlength{\cftbeforesecskip}{2pt}
+\setlength{\cftbeforesubsecskip}{0.5pt}
+
+% Definição de cores padronizadas
+\definecolor{piblue}{RGB}{0, 82, 204}
+\definecolor{pigray}{RGB}{94, 108, 132}
+\definecolor{lightgray}{RGB}{244, 245, 247}
+\definecolor{okgreen}{RGB}{0, 135, 90}
+\definecolor{warnorange}{RGB}{217, 119, 6}
+\definecolor{warnred}{RGB}{191, 38, 0}
+
+% Identificadores de código (variáveis, arquivos, status): sem escapar "_" e com quebra de linha permitida
+\makeatletter
+\g@addto@macro\UrlBreaks{\do\_\do\,\do\=}
+\makeatother
+\urlstyle{tt}
+\newcommand{\cfg}[1]{\path{#1}}
+
+% Formatação de títulos (H1 em azul com separador, H2 em cinza)
+\titleformat{\section}{\color{piblue}\normalfont\Large\bfseries}{\thesection}{0.6em}{}[{\titlerule[0.8pt]}]
+\titleformat{\subsection}{\color{pigray}\normalfont\large\bfseries}{\thesubsection}{1em}{}
+
+\hypersetup{colorlinks=true, linkcolor=piblue, urlcolor=piblue}
+\renewcommand{\figurename}{Figura}
+\renewcommand{\tablename}{Tabela}
+\setlist{itemsep=2pt, topsep=4pt}
+\emergencystretch=4em
+
+\title{
+    \vspace{-1.5cm}
+    \textbf{\Huge \textcolor{piblue}{Pipeline de Extração de Vídeos do YouTube}}\\
+    \vspace{0.3cm}
+    \Large Documentação Técnica: Funcionamento, Configuração e Critérios de Classificação
+}
+\author{Gabriel do Nascimento Lopes}
+\date{26 de novembro de 2026}
+
+\begin{document}
+
+\maketitle
+\vspace{-1.6cm}
+\thispagestyle{empty}
+
+\renewcommand{\contentsname}{Sumário}
+{\scriptsize\setlength{\parskip}{0pt}\tableofcontents}
+\clearpage
+
+%==============================================================================
+\section{Visão Geral}
+%==============================================================================
+
+A pipeline recebe um CSV com IDs de vídeos do YouTube (obtidos previamente pela API do YouTube) e, para cada vídeo \textbf{em português}, extrai de forma seletiva o áudio, as legendas, a miniatura e os \textit{frames}. Os arquivos brutos são enviados ao \textit{bucket} S3 do servidor da UFMG e os metadados da extração são registrados no PostgreSQL (esquema \cfg{phd_pipeline}). Vídeos que não são identificados como português, ou que apresentam erro, recebem uma classificação própria (Seção~\ref{sec:filtro}) e não geram dados no \textit{bucket} nem no banco.
+
+\subsection{Princípios de Projeto}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Classificar antes de baixar:} o idioma é decidido a partir dos metadados, antes de qualquer download de mídia.
+    \item \textbf{Idempotência por vídeo:} um vídeo com registro em \cfg{phd_pipeline.extraction} é ignorado nas execuções seguintes.
+    \item \textbf{Isolamento:} um processo novo do extrator para cada vídeo e um \textit{worker} independente para cada cookie.
+    \item \textbf{Sem acúmulo local:} a pasta do vídeo é apagada assim que o envio ao S3 e o registro no banco terminam.
+    \item \textbf{Parada segura:} a execução pode ser interrompida a qualquer momento sem deixar um vídeo pela metade.
+\end{itemize}
+
+\subsection{Componentes}
+\begin{table}[H]
+    \centering
+    \renewcommand{\arraystretch}{1.3}
+    \begin{tabularx}{\textwidth}{@{} l Y @{}}
+        \toprule
+        \textbf{\textcolor{piblue}{Arquivo}} & \textbf{\textcolor{piblue}{Responsabilidade}} \\
+        \midrule
+        \cfg{manager.py} & Orquestrador. Lê a configuração, filtra o CSV, divide os vídeos entre \textit{workers}, controla esperas por bloqueio, registra as listas de exclusão e gera os relatórios. \\
+        \cfg{video_downloader.py} & Extrator de um vídeo. Classifica o idioma, baixa as modalidades ativas, rotaciona proxies e devolve um código de saída que representa o desfecho. \\
+        \cfg{storage_sync.py} & Persistência. Envia os arquivos ao S3 e grava/atualiza o registro em \cfg{phd_pipeline.extraction}. \\
+        \cfg{bot.py} & Controle remoto pelo Telegram: comandos \cfg{/start} e \cfg{/stop}. \\
+        \cfg{config.conf} & Variáveis de inicialização compartilhadas por \cfg{manager.py} e \cfg{bot.py}. \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Componentes da pipeline.}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \resizebox{\textwidth}{!}{%
+    \begin{tikzpicture}[
+        node distance=0.45cm,
+        box/.style={rectangle, rounded corners=3pt, draw=piblue, fill=lightgray, text width=2.3cm, minimum height=1.5cm, align=center, font=\footnotesize},
+        filt/.style={box, draw=okgreen, text=okgreen, very thick},
+        drop/.style={box, dashed, draw=warnorange, text=warnorange},
+        arr/.style={-{Stealth[length=2.5mm]}, thick, color=pigray},
+        lab/.style={font=\scriptsize, text=pigray, align=center}
+    ]
+        \node[box] (mgr) {\cfg{manager.py}\\seleciona o vídeo da fatia};
+        \node[box, right=of mgr, text width=3.3cm] (dl) {\cfg{video_downloader.py}\\(subprocesso)};
+        \node[box, right=of dl] (meta) {Metadados\\(uma única consulta)};
+        \node[filt, right=of meta] (fil) {Filtro de idioma};
+        \node[drop, right=2.1cm of fil] (out) {Descartado\\(sem S3/DB)};
+
+        \node[box, below=1.4cm of fil] (mid) {Download das modalidades ativas};
+        \node[box, left=of mid] (s3) {Envio ao \textit{bucket} S3};
+        \node[box, left=of s3] (pg) {Registro no PostgreSQL};
+        \node[box, left=of pg] (clean) {Limpeza da pasta local};
+
+        \draw[arr] (mgr) -- (dl);
+        \draw[arr] (dl) -- (meta);
+        \draw[arr] (meta) -- (fil);
+        \draw[arr, dashed, color=warnorange] (fil) -- (out) node[midway, above=1pt, lab] {estrangeiro /\\indeterminado};
+        \draw[arr, color=okgreen] (fil) -- (mid) node[midway, right, lab] {português};
+        \draw[arr] (mid) -- (s3);
+        \draw[arr] (s3) -- (pg);
+        \draw[arr] (pg) -- (clean);
+    \end{tikzpicture}}
+    \caption{Ciclo de processamento de um vídeo. Erros de rede ou de acesso (indisponível, bloqueio etc.) ocorrem já na consulta de metadados e seguem o tratamento da Seção~\ref{sec:erros}.}
+\end{figure}
+
+%==============================================================================
+\section{Configuração e Variáveis de Inicialização}
+%==============================================================================
+
+\subsection{Como Iniciar}
+A execução é feita por \cfg{uv run src/manager.py}, com o argumento opcional \cfg{--conf <caminho>} (padrão: \cfg{config.conf}). Alternativamente, o comando \cfg{/start} do bot executa o mesmo comando em segundo plano (\cfg{nohup}) e grava a saída em \cfg{extracao_<data>.log}. O bot recusa o comando se já existir uma instância de \cfg{src/manager.py} em execução.
+
+Dependências externas: \textit{yt-dlp} (com o componente remoto \cfg{ejs:github}, ativado no extrator), \textit{ffmpeg}, \textit{boto3}, \textit{psycopg2}, \textit{requests}, \textit{python-telegram-bot} e \textit{httpx}.
+
+\subsection{Arquivo \texttt{config.conf}}
+Abaixo, as variáveis lidas por \cfg{manager.py}. A coluna \textit{Padrão} indica o valor assumido quando a variável não existe no arquivo; ``obrigatória'' significa que a ausência interrompe a execução.
+
+{\footnotesize
+\renewcommand{\arraystretch}{1.25}
+\begin{longtable}{@{} p{4.3cm} p{3cm} p{\dimexpr\textwidth-7.3cm-4\tabcolsep\relax} @{}}
+\caption{Variáveis do \texttt{config.conf}.}\\
+\toprule
+\textbf{\textcolor{piblue}{Variável}} & \textbf{\textcolor{piblue}{Padrão}} & \textbf{\textcolor{piblue}{Descrição}} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{\textcolor{piblue}{Variável}} & \textbf{\textcolor{piblue}{Padrão}} & \textbf{\textcolor{piblue}{Descrição}} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+
+        \multicolumn{3}{@{}l}{\textit{Seção \cfg{[DEFAULT]}}} \\
+        \cfg{cookies_dir} & \cfg{cookies} & Pasta com um arquivo \cfg{.txt} de cookies por perfil. \textbf{Cada arquivo gera um \textit{worker}}; sem nenhum arquivo, a execução é encerrada. \\
+        \cfg{output_dir} & \cfg{output} & Pasta local temporária dos vídeos em processamento. \\
+        \cfg{csv_alvo} & \cfg{lista_alvos.csv} & CSV de entrada. A coluna de IDs deve se chamar \cfg{Video_id} ou \cfg{video_id}. \\
+        \cfg{extrair_audio} & \cfg{false} & Ativa a extração de áudio (\cfg{.mp3}). \\
+        \cfg{extrair_subs} & \cfg{false} & Ativa o download de legendas em português. \\
+        \cfg{extrair_frames} & \cfg{false} & Ativa o download do vídeo e a extração de \textit{frames}. \\
+        \cfg{extrair_thumb} & \cfg{false} & Ativa o download da miniatura. \\
+        \cfg{using_proxy} & \cfg{false} & Ativa a rotação de proxies. \\
+        \cfg{proxies_list} & vazio & URLs de proxy separadas por vírgula (ex.: \cfg{socks5://127.0.0.1:1080}). Só tem efeito com \cfg{using_proxy = true}. \\
+        \cfg{ids_429} & \cfg{ids_429.txt} & Registro dos IDs que retornaram HTTP 429. \\
+        \cfg{ids_foreign} & \cfg{ids_foreign.txt} & Lista persistente de IDs classificados como estrangeiros. \\
+        \cfg{ids_undetermined} & \cfg{ids_undetermined.txt} & Lista persistente de IDs com idioma indeterminado. \\
+        \midrule
+        \multicolumn{3}{@{}l}{\textit{Seção \cfg{[TELEGRAM]}}} \\
+        \cfg{bot_token} & vazio & Token do bot. Sem token (ou com o valor \textit{placeholder}), o \cfg{manager.py} apenas deixa de enviar notificações; o \cfg{bot.py} exige o token. \\
+        \cfg{chat_id} & vazio & Chat que recebe as notificações e \textbf{único chat autorizado} a usar \cfg{/start} e \cfg{/stop}. \\
+        \midrule
+        \multicolumn{3}{@{}l}{\textit{Seção \cfg{[S3]}}} \\
+        \cfg{endpoint} & obrigatória & URL do serviço S3, com esquema (\cfg{http://} ou \cfg{https://}). \\
+        \cfg{port} & nenhum & Porta, concatenada ao \cfg{endpoint} quando informada. \\
+        \cfg{access_key}, \cfg{secret_key} & obrigatórias & Credenciais de acesso. \\
+        \cfg{bucket_name} & obrigatória & \textit{Bucket} de destino. \\
+        \midrule
+        \multicolumn{3}{@{}l}{\textit{Seção \cfg{[POSTGRES]}}} \\
+        \cfg{host}, \cfg{dbname}, \cfg{user}, \cfg{password} & obrigatórias & Dados de conexão. \\
+        \cfg{port} & \cfg{5432} & Porta do PostgreSQL. \\
+\end{longtable}
+}
+
+\noindent\textbf{Regra das modalidades.} Se as quatro variáveis \cfg{extrair_*} forem \cfg{false} (ou ausentes), \textbf{todas as modalidades são ativadas}. Para extrair apenas uma parte, basta ativar somente as desejadas.
+
+\noindent\textbf{Estrutura mínima do arquivo} (valores ilustrativos, sem credenciais):
+\begin{verbatim}
+[DEFAULT]
+cookies_dir = cookies
+output_dir = output
+csv_alvo = lista_alvos.csv
+extrair_audio = true
+extrair_subs = true
+extrair_frames = true
+extrair_thumb = true
+using_proxy = true
+proxies_list = socks5://127.0.0.1:1080, socks5://127.0.0.1:1081
+
+[TELEGRAM]
+bot_token = <token>
+chat_id = <id do chat>
+
+[S3]
+endpoint = http://<host>
+port = <porta>
+access_key = <chave>
+secret_key = <segredo>
+bucket_name = <bucket>
+
+[POSTGRES]
+host = <host>
+port = 5432
+dbname = <banco>
+user = <usuario>
+password = <senha>
+\end{verbatim}
+
+\noindent O \cfg{bot.py} lê o mesmo \cfg{config.conf}, a partir de um diretório de projeto fixo no código (\cfg{PROJECT_DIR}), e usa apenas a seção \cfg{[TELEGRAM]}.
+
+\subsection{Argumentos do \texttt{video\_downloader.py}}
+O extrator é chamado pelo \cfg{manager.py} como um subprocesso por vídeo. Os argumentos abaixo podem também ser usados em testes manuais.
+
+\begin{table}[H]
+    \centering
+    \footnotesize
+    \renewcommand{\arraystretch}{1.25}
+    \begin{tabularx}{\textwidth}{@{} l Y @{}}
+        \toprule
+        \textbf{\textcolor{piblue}{Argumento}} & \textbf{\textcolor{piblue}{Função}} \\
+        \midrule
+        \cfg{--id} (obrigatório) & ID do vídeo. O \cfg{manager.py} usa a forma \cfg{--id=<ID>} para que IDs iniciados por ``-'' não sejam interpretados como \textit{flags}. \\
+        \cfg{--output} & Pasta de saída (padrão: \cfg{output}). \\
+        \cfg{--cookies-dir} & Pasta que contém \cfg{cookies_base.txt} ou \cfg{cookies.txt}. \\
+        \cfg{--audio}, \cfg{--subtitles}/\cfg{--subs}, \cfg{--frames}, \cfg{--thumbnail}/\cfg{--thumb} & Seleção das modalidades. Sem nenhuma delas, todas são ativadas. \\
+        \cfg{--use-proxies} & Ativa a rotação de proxies. \\
+        \cfg{--proxies} & Lista de proxies separada por vírgula. \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Argumentos de linha de comando do extrator.}
+\end{table}
+
+\subsection{Constantes Internas}
+\begin{table}[H]
+    \centering
+    \footnotesize
+    \renewcommand{\arraystretch}{1.25}
+    \begin{tabularx}{\textwidth}{@{} l l Y @{}}
+        \toprule
+        \textbf{\textcolor{piblue}{Constante}} & \textbf{\textcolor{piblue}{Valor}} & \textbf{\textcolor{piblue}{Efeito}} \\
+        \midrule
+        \cfg{BLOCK_COOLDOWN_SECONDS} & 90 min & Espera do \textit{worker} após bloqueio (de sessão ou de IP) antes de repetir o mesmo vídeo. \\
+        \cfg{STOP_FILE} & \cfg{STOP_EXTRACTION} & Arquivo-sinal criado pelo \cfg{/stop}; verificado pelos \textit{workers}. \\
+        Pausa entre vídeos & 2 a 6 s (aleatória) & Intervalo antes de cada vídeo de um \textit{worker}. \\
+        \cfg{player_client} & \cfg{android} & Cliente do YouTube usado na extração de metadados e mídia. \\
+        \cfg{retries} / \cfg{socket_timeout} & 2 / 15 s & Tentativas e \textit{timeout} do \textit{yt-dlp}. \\
+        Áudio & MP3, 192 kbps & Conversão feita pelo \textit{ffmpeg} (\cfg{FFmpegExtractAudio}). \\
+        \textit{Frames} & 1 a cada 10 s, JPEG (\cfg{-q:v 2}) & \cfg{fps=1/10}; arquivos \cfg{frame_NNNN.jpg}. \\
+        \cfg{multipart_threshold} (S3) & 5 GiB & Limite para envio em partes. \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Constantes que governam o comportamento da pipeline.}
+\end{table}
+
+\subsection{Arquivos de Estado e Saídas}
+\begin{table}[H]
+    \centering
+    \footnotesize
+    \renewcommand{\arraystretch}{1.25}
+    \begin{tabularx}{\textwidth}{@{} l Y @{}}
+        \toprule
+        \textbf{\textcolor{piblue}{Arquivo/pasta}} & \textbf{\textcolor{piblue}{Conteúdo e ciclo de vida}} \\
+        \midrule
+        \cfg{ids_foreign.txt}, \cfg{ids_undetermined.txt} & Um ID por linha. \textbf{Persistentes}: IDs listados são excluídos das próximas execuções. \\
+        \cfg{ids_429.txt} & IDs com HTTP 429, apenas para observação (não filtra execuções). \\
+        \cfg{STOP_EXTRACTION} & Sinal de parada. Removido no início de cada execução do \cfg{manager.py}. \\
+        \cfg{worker_env_profile_<N>/} & Ambiente temporário do \textit{worker} (cópia do cookie e do extrator, \cfg{cookies_temp.txt}, \cfg{proxy_index.txt}). Apagado ao fim do \textit{worker}. \\
+        \cfg{csv_pending_execution.csv}, \cfg{sub_csvs/} & Pendências do ciclo e fatias por \textit{worker}. Apagados ao fim da execução. \\
+        \cfg{csv_not_extracted_final.csv} & Vídeos que seguem pendentes ao final da execução. \\
+        \cfg{relatorios_consolidados/} & \cfg{relatorio_perfil_<N>.txt} por \textit{worker} e \cfg{RESUMO_GERAL_EXECUCAO.txt}. \\
+        \cfg{extracao_<data>.log} & Saída da execução iniciada pelo \cfg{/start}. \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Arquivos de estado, relatórios e temporários.}
+\end{table}
+
+%==============================================================================
+\section{Funcionamento do Sistema}
+%==============================================================================
+
+\subsection{Sequência de Inicialização}
+\begin{enumerate}[leftmargin=*]
+    \item Lê o \cfg{config.conf}; se o arquivo não existir, encerra com erro.
+    \item Define as modalidades ativas (todas, se nenhuma foi marcada).
+    \item Remove um eventual \cfg{STOP_EXTRACTION} de execuções anteriores.
+    \item Lista os cookies em \cfg{cookies_dir}; sem nenhum, encerra com erro.
+    \item Consulta o PostgreSQL e obtém os IDs já sincronizados (junção de \cfg{extraction} com \cfg{video}).
+    \item Carrega \cfg{ids_foreign.txt} e \cfg{ids_undetermined.txt}.
+    \item Filtra o CSV alvo, removendo IDs já sincronizados e IDs das listas de exclusão. O log \cfg{[INIT]} informa o total, os já sincronizados, os pulados por idioma e os pendentes. Sem pendentes, notifica no Telegram e encerra.
+    \item Divide os pendentes em $C$ fatias de $\lceil N / C \rceil$ vídeos, em que $N$ é o número de pendentes e $C$ o número de cookies, e grava cada fatia em \cfg{sub_csvs/}.
+    \item Notifica o início no Telegram e dispara um \textit{pool} de $C$ processos (um \textit{worker} por cookie).
+    \item Ao final, consolida os resultados: atualiza as listas de exclusão, gera \cfg{csv_not_extracted_final.csv} e os relatórios, apaga os temporários e notifica.
+\end{enumerate}
+
+\subsection{Paralelismo e Isolamento}
+Cada \textit{worker} (perfil) processa sua fatia sequencialmente, em um ambiente próprio (\cfg{worker_env_profile_<N>}) com uma cópia do cookie e do extrator. Cada vídeo roda em um processo novo de \cfg{video_downloader.py}, o que isola falhas e exige que o índice do proxy atual seja persistido em arquivo (\cfg{proxy_index.txt}) entre processos. O paralelismo pode ser ampliado adicionando cookies; o gargalo observado é a CPU durante a extração de \textit{frames} pelo \textit{ffmpeg}, e o servidor local não comporta mais de duas execuções simultâneas.
+
+\subsection{Modalidades de Extração}
+\begin{table}[H]
+    \centering
+    \footnotesize
+    \renewcommand{\arraystretch}{1.25}
+    \begin{tabularx}{\textwidth}{@{} l l Y @{}}
+        \toprule
+        \textbf{\textcolor{piblue}{Modalidade}} & \textbf{\textcolor{piblue}{Saída}} & \textbf{\textcolor{piblue}{Detalhes}} \\
+        \midrule
+        Legendas & \cfg{manual_<id>.srt} ou \cfg{automatic_<id>.srt} & Apenas português; critério na Seção~\ref{sec:legenda}. Formato SRT. \\
+        Miniatura & \cfg{<id>.<ext>} & Imagem original do YouTube (tipicamente \cfg{.webp}). \\
+        Áudio & \cfg{<id>.mp3} & Melhor áudio disponível, convertido para MP3 a 192 kbps. \\
+        \textit{Frames} & \cfg{frames/frame_NNNN.jpg} & Baixa o melhor vídeo, extrai 1 \textit{frame} a cada 10 s com \textit{ffmpeg} e apaga o vídeo base. Falha do \textit{ffmpeg} não interrompe o processamento e o arquivo de vídeo base permanece na pasta. \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Modalidades extraídas por vídeo.}
+\end{table}
+
+\subsection{Persistência: S3, PostgreSQL e Limpeza}
+Para cada vídeo com código de saída 0, o \cfg{manager.py} executa, nesta ordem:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Envio ao S3:} todos os arquivos da pasta do vídeo, inclusive subpastas, são enviados com a chave \cfg{data/<id>/<caminho relativo>}.
+    \item \textbf{Registro no PostgreSQL:} uma linha em \cfg{phd_pipeline.extraction} por vídeo, com prefixo \cfg{data/<id>} como \cfg{bucket_key}. O campo \cfg{source_type} é \cfg{YOUTUBE_MANUAL} se há legenda iniciada por \cfg{manual_}, \cfg{YOUTUBE_AUTOMATIC} se há apenas legenda automática e nulo se não há legenda. O campo \cfg{file_format} lista as modalidades efetivamente presentes (ex.: \cfg{AUDIO,SUBS}); \cfg{SUBS} só aparece se existe arquivo de legenda. O \cfg{language_code} é \cfg{pt} quando há legenda e nulo caso contrário.
+    \item \textbf{Limpeza:} a pasta local do vídeo é apagada.
+\end{enumerate}
+Se o envio ou o registro falhar, o erro é impresso (\cfg{[ERRO][SYNC]}), a pasta local \textbf{não} é apagada e o vídeo permanece pendente, sendo reprocessado numa próxima execução.
+
+\subsection{Controle pelo Telegram}
+\begin{itemize}[leftmargin=*]
+    \item \cfg{/start}: inicia o \cfg{manager.py} em segundo plano, se não houver outra instância.
+    \item \cfg{/stop}: cria o \cfg{STOP_EXTRACTION}. Cada \textit{worker} termina o vídeo em curso (download, S3 e PostgreSQL) e encerra; \textit{workers} em espera por bloqueio encerram em até cerca de 10 s.
+    \item Notificações automáticas: início do ciclo, cada bloqueio, relatório de cada perfil e relatório final.
+\end{itemize}
+Apenas mensagens do \cfg{chat_id} configurado são atendidas; as demais são ignoradas. O bot força conexões IPv4.
+
+%==============================================================================
+\section{Rede, Bloqueios e Rotação de IPs}
+%==============================================================================
+
+\subsection{Sintomas e Diagnóstico}
+Após cerca de 100 a 120 vídeos extraídos, o \textit{yt-dlp} passa a retornar um erro informando que a requisição partia de um robô. A hipótese inicial, de que o bloqueio dependesse dos cookies, foi descartada: a causa é o endereço IP. Em média, após cerca de 111 vídeos, a plataforma classifica o IP como suspeito e o coloca em uma quarentena de aproximadamente 2 horas, período em que não é possível invocar o \textit{yt-dlp} a partir dele.
+
+\subsection{Rotação de IPs via Proxy}
+Com \cfg{using_proxy = true}, o extrator usa a lista \cfg{proxies_list} (túneis SSH que expõem portas locais como proxies SOCKS5 apontando para as demais máquinas). O mecanismo é:
+\begin{enumerate}[leftmargin=*]
+    \item O índice do proxy atual é lido de \cfg{proxy_index.txt} (padrão: o primeiro).
+    \item Se o erro for de bloqueio por robô, o índice avança para o próximo proxy, é gravado em arquivo e o \textbf{mesmo vídeo} é tentado na nova origem.
+    \item Se todos os proxies da lista falharem por bloqueio, o extrator devolve \cfg{BOT\_BLOCK} (código 1) e o \cfg{manager.py} coloca o \textit{worker} em espera de 90 minutos antes de repetir o mesmo vídeo.
+\end{enumerate}
+Sem proxies, há uma única origem (conexão direta) e, portanto, uma única tentativa por vídeo. Com proxies ativos, a conexão direta não faz parte da lista, a menos que seja explicitamente configurada por um túnel.
+
+\noindent Os tipos de bloqueio têm tratamentos distintos: \textbf{bloqueio de IP} rotaciona proxy; \textbf{\textit{rate-limit} de sessão} (cookie) e \textbf{HTTP 429} não indicam IP bloqueado e, portanto, não rotacionam (Seção~\ref{sec:erros}).
+
+\subsection{Alternativas Avaliadas}
+\begin{table}[H]
+    \centering
+    \renewcommand{\arraystretch}{1.3}
+    \begin{tabularx}{\textwidth}{@{} l Y r @{}}
+        \toprule
+        \textbf{\textcolor{piblue}{Alternativa}} & \textbf{\textcolor{piblue}{Avaliação}} & \textbf{\textcolor{piblue}{Situação}} \\
+        \midrule
+        Proxies gratuitos & IPs já marcados, que o YouTube bloqueia com muita facilidade & Descartada \\
+        IPs dos servidores da UFMG & Testados por um período: o bloqueio ocorre bem mais rápido, e há receio de que as políticas internas restrinjam o acesso SSH em razão do grande volume de dados trafegado & Descartada por ora \\
+        Proxies pagos & Não utilizados nesta etapa & Não adotada \\
+        IPs próprios & Servidor caseiro, servidor em nuvem e notebook, roteados entre si por túnel SSH & Adotada \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Comparativo das opções de origem de tráfego para a extração.}
+\end{table}
+
+\subsection{Limitações}
+Com três IPs, o ciclo se esgota antes de o primeiro IP sair da quarentena (cerca de 2 h), o que obriga a reiniciar a execução manualmente a cada poucas horas. A espera automática do \textit{worker} (90 min) é um pouco menor que a quarentena observada, de modo que a nova tentativa pode encontrar o IP ainda bloqueado e repetir a espera. A meta é chegar a cerca de 5 IPs, para que o primeiro já tenha sido liberado quando o ciclo completar a volta.
+
+\begin{figure}[H]
+    \centering
+    \begin{tikzpicture}[
+        node distance=1.3cm,
+        ip/.style={circle, draw=piblue, fill=lightgray, minimum size=1.3cm, font=\small\bfseries, text=piblue},
+        planned/.style={ip, dashed, draw=pigray, text=pigray},
+        arr/.style={-{Stealth[length=2.5mm]}, thick, color=pigray}
+    ]
+        \node[ip] (a) {IP 1};
+        \node[ip, right=of a] (b) {IP 2};
+        \node[ip, right=of b] (c) {IP 3};
+        \node[planned, right=of c] (d) {IP 4};
+        \node[planned, right=of d] (e) {IP 5};
+
+        \draw[arr] (a) -- (b) node[midway, above, font=\scriptsize, text=pigray] {bloqueio};
+        \draw[arr] (b) -- (c) node[midway, above, font=\scriptsize, text=pigray] {bloqueio};
+        \draw[arr] (c) -- (d) node[midway, above, font=\scriptsize, text=pigray] {bloqueio};
+        \draw[arr] (d) -- (e) node[midway, above, font=\scriptsize, text=pigray] {bloqueio};
+
+        \draw[arr] (e.south) to[out=-90, in=-90, looseness=0.5]
+            node[midway, below, font=\scriptsize, text=pigray, align=center] {fim do ciclo: o IP 1 já saiu da quarentena (cerca de 2 h)} (a.south);
+    \end{tikzpicture}
+    \caption{Rotação de IPs. Os círculos tracejados representam a meta de ampliação para 5 IPs.}
+\end{figure}
+
+%==============================================================================
+\clearpage
+\section{Filtro de Idioma e Classificação de Erros}
+\label{sec:filtro}
+%==============================================================================
+
+Esta seção descreve como o \cfg{video_downloader.py} decide o destino de cada vídeo. Todo desfecho resulta em \textbf{exatamente um status}, associado a um código de saída que o \cfg{manager.py} interpreta (Seção~\ref{sec:erros}).
+
+\subsection{Visão Geral e Garantias}
+Para cada vídeo, o extrator faz \textbf{uma única consulta de metadados} (\cfg{extract_info}, sem download). O mesmo resultado alimenta, nesta ordem: (i) a classificação de idioma, (ii) a seleção da legenda e (iii) as fases de download, que reutilizam os metadados sem nova consulta. Isso garante que:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{nenhuma mídia é baixada antes do veredito de idioma};
+    \item vídeos estrangeiros e indeterminados têm a pasta local removida e \textbf{nada é enviado ao S3 nem ao PostgreSQL};
+    \item vídeos estrangeiros e indeterminados são registrados em listas persistentes e não são consultados novamente nas próximas execuções;
+    \item o vídeo precisa estar acessível para ser classificado: erros de acesso ocorrem na própria consulta de metadados e têm precedência sobre o idioma.
+\end{itemize}
+
+\subsection{Classificação de Idioma}
+\label{sec:idioma}
+A função \cfg{resolve_language} usa dois campos dos metadados:
+\begin{itemize}[leftmargin=*]
+    \item \cfg{language}: idioma declarado do vídeo (critério principal);
+    \item \cfg{automatic_captions}: as chaves terminadas em \cfg{-orig}, que identificam a legenda automática da \textbf{fala original} (ex.: \cfg{pt-orig}). Legendas automáticas sem o sufixo são traduções geradas pelo YouTube e não servem como evidência de idioma.
+\end{itemize}
+
+As regras são avaliadas na ordem abaixo; a primeira que se aplica decide o veredito. As comparações ignoram maiúsculas e minúsculas.
+
+\begin{table}[H]
+    \centering
+    \footnotesize
+    \renewcommand{\arraystretch}{1.3}
+    \begin{tabularx}{\textwidth}{@{} c l l l Y @{}}
+        \toprule
+        \textbf{\textcolor{piblue}{N.º}} & \textbf{\textcolor{piblue}{\cfg{language}}} & \textbf{\textcolor{piblue}{Faixas \cfg{-orig}}} & \textbf{\textcolor{piblue}{Veredito}} & \textbf{\textcolor{piblue}{Status e desfecho}} \\
+        \midrule
+        1 & começa com \cfg{pt} & qualquer & \cfg{pt} & Segue para a extração. \\
+        2 & declarado, outro idioma & qualquer & \cfg{foreign} & \texttt{FOREIGN\_\allowbreak LANGUAGE}: descartado. \\
+        3 & ausente & exatamente 1, \cfg{pt*} & \cfg{pt} & Segue para a extração. \\
+        4 & ausente & exatamente 1, outro idioma & \cfg{foreign} & \texttt{FOREIGN\_\allowbreak LANGUAGE}: descartado. \\
+        5 & ausente & 2 ou mais & \cfg{ambiguous} & \texttt{LANGUAGE\_\allowbreak UNDETERMINED}: descartado. \\
+        6 & ausente & nenhuma & \cfg{unknown} & \texttt{LANGUAGE\_\allowbreak UNDETERMINED}: descartado. \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Regras de classificação de idioma, em ordem de avaliação.}
+\end{table}
+
+\noindent\textbf{Racional.} O idioma declarado é o critério principal. A faixa \cfg{-orig} é usada apenas quando não há idioma declarado e somente se for \textbf{única}: vídeos e \textit{shorts} costumam ter várias faixas \cfg{-orig}, situação em que não há como saber qual representa a fala. Nesses casos, o sistema classifica como indeterminado em vez de assumir um idioma. Os vereditos \cfg{ambiguous} e \cfg{unknown} resultam no mesmo status e na mesma lista, e apenas o texto de log distingue um do outro.
+
+\begin{figure}[H]
+    \centering
+    \resizebox{\textwidth}{!}{%
+    \begin{tikzpicture}[
+        box/.style={rectangle, rounded corners=3pt, draw=piblue, fill=lightgray, text width=3.4cm, minimum height=1cm, align=center, font=\footnotesize},
+        dec/.style={diamond, aspect=2.2, draw=piblue, fill=white, text width=2.2cm, align=center, inner sep=1pt, font=\footnotesize},
+        res/.style={rectangle, rounded corners=3pt, very thick, text width=3.1cm, minimum height=0.9cm, align=center, font=\footnotesize\bfseries},
+        okr/.style={res, draw=okgreen, text=okgreen, fill=okgreen!8},
+        fr/.style={res, draw=warnorange, text=warnorange, fill=warnorange!8},
+        ur/.style={res, text width=3.7cm, draw=warnred, text=warnred, fill=warnred!8},
+        arr/.style={-{Stealth[length=2.5mm]}, thick, color=pigray},
+        lab/.style={font=\scriptsize, text=pigray, fill=white, inner sep=1pt}
+    ]
+        \node[box] (start) at (0,0) {Metadados do vídeo\\(\cfg{extract_info}, sem download)};
+        \node[dec] (d1) at (0,-2.2) {\cfg{language} declarado?};
+        \node[dec] (d2) at (-4.6,-4.8) {começa com \cfg{pt}?};
+        \node[dec] (d3) at (4.6,-4.8) {faixas \cfg{-orig} na legenda automática};
+        \node[dec] (d4) at (2.4,-8.2) {faixa única é \cfg{pt}?};
+
+        \node[okr] (r1) at (-6.9,-7.6) {PORTUGUÊS};
+        \node[fr] (r2) at (-2.6,-7.6) {ESTRANGEIRO};
+        \node[okr] (r3) at (-0.4,-11) {PORTUGUÊS};
+        \node[fr] (r4) at (5,-11) {ESTRANGEIRO};
+        \node[ur] (r5) at (8.6,-8.2) {INDETERMINADO};
+
+        \draw[arr] (start) -- (d1);
+        \draw[arr] (d1) -| (d2) node[pos=0.25, lab, above] {sim};
+        \draw[arr] (d1) -| (d3) node[pos=0.25, lab, above] {não};
+        \draw[arr] (d2) -- (r1) node[midway, lab, above left] {sim};
+        \draw[arr] (d2) -- (r2) node[midway, lab, above right] {não};
+        \draw[arr] (d3) -- (d4) node[midway, lab, left] {1};
+        \draw[arr] (d3) -| (r5) node[pos=0.25, lab, above] {0 ou 2+};
+        \draw[arr] (d4) -- (r3) node[midway, lab, above left] {sim};
+        \draw[arr] (d4) -- (r4) node[midway, lab, above right] {não};
+    \end{tikzpicture}}
+    \caption{Árvore de decisão do idioma. \textit{Português} segue para a extração; \textit{estrangeiro} e \textit{indeterminado} são descartados.}
+\end{figure}
+
+\subsection{Seleção da Legenda}
+\label{sec:legenda}
+A escolha da legenda ocorre apenas para vídeos classificados como português e é independente do veredito de idioma. A ordem de preferência é:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Legenda manual em português:} qualquer chave de \cfg{subtitles} que case com \cfg{pt} ou \cfg{pt-XX}; prefere-se \cfg{pt}, depois \cfg{pt-BR}, depois \cfg{pt-PT}, e, na ausência delas, a primeira disponível. Gera \cfg{manual_<id>.srt}.
+    \item \textbf{Legenda automática da fala original em português:} a faixa \cfg{pt-orig}. Gera \cfg{automatic_<id>.srt}.
+    \item \textbf{Nenhuma legenda:} se não houver nenhuma das anteriores. Uma legenda automática \cfg{pt} sem sufixo \cfg{-orig} é tratada como provável tradução e \textbf{ignorada} (com aviso no log).
+\end{enumerate}
+Um vídeo em português \textbf{sem legenda elegível não é descartado}: a mídia é baixada normalmente e, no banco, \cfg{source_type} e \cfg{language_code} ficam nulos.
+
+\subsection{Classificação de Erros}
+\label{sec:erros}
+Os desfechos de erro são determinados por exceções. As duas exceções de idioma têm tratamento próprio e \textbf{precedem} qualquer análise de texto de erro: \cfg{ForeignLanguageError} (estrangeiro) e \cfg{UndeterminedLanguageError} (indeterminado). Para as demais exceções, o texto da mensagem é comparado, em minúsculas, a indicadores, em uma \textbf{ordem fixa} que importa: por exemplo, a mensagem de \textit{rate-limit} de sessão contém o trecho \textit{video unavailable} e, se fosse avaliada depois, o vídeo seria descartado por engano como indisponível.
+
+Ordem de avaliação das exceções genéricas:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Bloqueio por robô} (\textit{sign in to confirm you're not a bot}): rotaciona para o próximo proxy e repete o vídeo.
+    \item \textbf{\textit{Rate-limit} de sessão} (\textit{rate-limited by youtube}): não rotaciona; devolve \cfg{SESSION\_BLOCK}.
+    \item \textbf{Restrição de idade} (\textit{confirm your age}): não rotaciona; exige conta verificada.
+    \item \textbf{HTTP 429} (\textit{http error 429}, \textit{too many requests}): não rotaciona.
+    \item \textbf{Vídeo indisponível} (indisponível, privado, removido, conta encerrada, exclusivo para membros).
+    \item \textbf{Qualquer outro erro} (ex.: \textit{timeout}): tenta o próximo proxy; se todos falharem, devolve \cfg{ERROR}.
+\end{enumerate}
+
+\begin{table}[H]
+    \centering
+    \footnotesize
+    \renewcommand{\arraystretch}{1.3}
+    \begin{tabularx}{\textwidth}{@{} >{\raggedright\arraybackslash}p{2.7cm} Y c Y Y @{}}
+        \toprule
+        \textbf{\textcolor{piblue}{Status}} & \textbf{\textcolor{piblue}{Gatilho}} & \textbf{\textcolor{piblue}{Cód.}} & \textbf{\textcolor{piblue}{Ação do \cfg{manager.py}}} & \textbf{\textcolor{piblue}{Novo ciclo}} \\
+        \midrule
+        \texttt{SUCCESS} & Modalidades ativas concluídas & 0 & Envia ao S3, registra no PostgreSQL e apaga a pasta local. & Ignorado (já está no banco). \\
+        \texttt{FOREIGN\_\allowbreak LANGUAGE} & Veredito \cfg{foreign} & 6 & Pasta removida; ID anexado a \cfg{ids_foreign.txt}. & Excluído enquanto o ID estiver na lista. \\
+        \texttt{LANGUAGE\_\allowbreak UNDETERMINED} & Veredito \cfg{ambiguous} ou \cfg{unknown} & 7 & Pasta removida; ID anexado a \cfg{ids_undetermined.txt}. & Excluído enquanto o ID estiver na lista. \\
+        \texttt{UNAVAILABLE} & Vídeo indisponível, privado ou removido & 2 & Pasta removida; sai dos pendentes da sessão. Não é gravado em lista. & Reavaliado (falha de novo). \\
+        \texttt{AGE\_\allowbreak RESTRICTED} & Restrição de idade & 4 & Pasta removida; sai dos pendentes da sessão. Não é gravado em lista. & Reavaliado (falha de novo). \\
+        \texttt{RATE\_\allowbreak LIMIT\_429} & HTTP 429 (ex.: legendas) & 5 & ID anexado a \cfg{ids_429.txt} apenas para observação; permanece pendente. & Reavaliado (a lista não filtra). \\
+        \texttt{SESSION\_\allowbreak BLOCK} & \textit{Rate-limit} de sessão do cookie & 3 & \textit{Worker} espera 90 min e repete o mesmo vídeo; alerta no Telegram. & Mesmo vídeo, após a espera. \\
+        \texttt{BOT\_BLOCK} & Bloqueio por robô em todas as origens & 1 & \textit{Worker} espera 90 min e repete o mesmo vídeo; alerta no Telegram. & Mesmo vídeo, após a espera. \\
+        \texttt{ERROR} & Outro erro em todas as origens & 1 & Sem ação especial; permanece pendente e consta em \cfg{csv_not_extracted_final.csv}. & Reavaliado. \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Status de saída do extrator e tratamento pelo \texttt{manager.py}.}
+\end{table}
+
+\noindent\textbf{Distinção entre \texttt{BOT\_BLOCK} e \texttt{ERROR}.} Ambos saem com código 1. O \cfg{manager.py} identifica o bloqueio pelo texto emitido pelo extrator (\textit{bloqueio/rate-limit detectado} ou \textit{falha crítica}); qualquer outro código 1 é tratado como erro comum, sem espera.
+
+\subsection{Persistência dos Resultados da Classificação}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Português:} registro em \cfg{phd_pipeline.extraction} e arquivos no S3.
+    \item \textbf{Estrangeiro e indeterminado:} apenas os IDs, em \cfg{ids_foreign.txt} e \cfg{ids_undetermined.txt}, sem dados no S3 ou no banco. As listas são gravadas ao final da execução, sem duplicar IDs.
+    \item \textbf{Indisponível e restrito por idade:} não são gravados em lista; seus IDs aparecem novamente nas execuções seguintes e falham rapidamente.
+    \item Os relatórios por perfil e o resumo geral contabilizam, por execução, os vídeos estrangeiros, indeterminados e com erro 429, além dos bloqueios.
+\end{itemize}
+
+\subsection{Reprocessamento}
+Para reavaliar um vídeo estrangeiro ou indeterminado, basta remover seu ID da lista correspondente; na próxima execução ele volta a ser consultado e classificado. Vídeos já registrados em \cfg{phd_pipeline.extraction} só voltam a ser processados se o registro for removido do banco.
+
+\subsection{Limitações Conhecidas do Critério}
+\begin{itemize}[leftmargin=*]
+    \item O critério depende de metadados (idioma declarado e faixas \cfg{-orig}); \textbf{não há detecção do idioma falado} por análise do áudio. Um vídeo com idioma declarado incorreto é classificado conforme o declarado.
+    \item O campo \cfg{language} é lido da extração com \cfg{player_client=android}; um comentário no código indica que outros clientes podem devolver valor diferente. Reproduzir o critério fora do extrator exige usar o mesmo cliente.
+    \item O sistema é conservador: sem evidência suficiente (casos 5 e 6), o vídeo é descartado em vez de aceito, podendo excluir vídeos em português sem idioma declarado.
+    \item O veredito não é gravado no banco. O \cfg{language_code} registra \cfg{pt} apenas quando há legenda, independentemente da variante (\cfg{pt-BR}, \cfg{pt-PT}), e é nulo em vídeos em português sem legenda. As listas de exclusão guardam só o ID, sem motivo nem data.
+\end{itemize}
+
+%==============================================================================
+\section{Modelagem dos Dados}
+%==============================================================================
+
+\subsection{Organização no \textit{Bucket}}
+Os dados brutos ficam no \textit{bucket} de \textit{YouTube Assets}, organizados por vídeo: \cfg{data/<youtube_video_id>/...}, contendo os arquivos das modalidades extraídas (legendas, \cfg{.mp3}, miniatura e a pasta \cfg{frames/}).
+
+\subsection{Tabelas no PostgreSQL}
+\begin{itemize}[leftmargin=*]
+    \item \cfg{phd_pipeline.video}: referência única de cada vídeo (ID interno e \cfg{youtube_video_id}). Esta pipeline apenas consulta a tabela: se o vídeo não existir nela, o registro falha com erro e o vídeo permanece pendente.
+    \item \cfg{phd_pipeline.extraction}: uma linha por vídeo extraído.
+\end{itemize}
+
+\begin{table}[H]
+    \centering
+    \footnotesize
+    \renewcommand{\arraystretch}{1.25}
+    \begin{tabularx}{\textwidth}{@{} l Y @{}}
+        \toprule
+        \textbf{\textcolor{piblue}{Coluna}} & \textbf{\textcolor{piblue}{Conteúdo}} \\
+        \midrule
+        \cfg{video_id} & ID interno do vídeo em \cfg{phd_pipeline.video}. \\
+        \cfg{source_type} & \cfg{YOUTUBE_MANUAL}, \cfg{YOUTUBE_AUTOMATIC} ou nulo (sem legenda). \\
+        \cfg{language_code} & \cfg{pt} quando há legenda; nulo caso contrário. \\
+        \cfg{file_format} & Modalidades presentes, separadas por vírgula (\cfg{AUDIO}, \cfg{FRAMES}, \cfg{SUBS}, \cfg{THUMB}). \\
+        \cfg{acquisition_tool}, \cfg{acquisition_tool_version} & Ferramenta de aquisição (\textit{yt-dlp}) e sua versão. \\
+        \cfg{s3_bucket}, \cfg{bucket_key} & Local dos arquivos: \textit{bucket} e prefixo \cfg{data/<id>}. \\
+        \cfg{size_bytes} & Soma do tamanho dos arquivos enviados. \\
+        \cfg{acquired_at} & Data e hora da aquisição, atualizada a cada reprocessamento. \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Colunas de \texttt{phd\_pipeline.extraction} gravadas pela pipeline.}
+\end{table}
+
+\noindent A gravação é um \textit{upsert} com chave de conflito (\cfg{s3_bucket}, \cfg{bucket_key}): reprocessar um vídeo atualiza o registro existente em vez de duplicá-lo.
+
+%==============================================================================
+\clearpage
+\section{Extração Realizada}
+\label{sec:extracao}
+%==============================================================================
+
+Resultados consolidados a partir do banco de dados (esquema \cfg{phd_pipeline}) e das listas de classificação geradas pelo \cfg{manager.py}.
+
+\subsection{Universo de Vídeos e Classificação}
+
+\begin{table}[H]
+    \centering
+    \renewcommand{\arraystretch}{1.3}
+    \begin{tabularx}{\textwidth}{@{} l Y r @{}}
+        \toprule
+        \textbf{\textcolor{piblue}{Indicador}} & \textbf{\textcolor{piblue}{Fonte}} & \textbf{\textcolor{piblue}{Valor}} \\
+        \midrule
+        Vídeos totais encontrados & Linhas da tabela \cfg{phd_pipeline.video} & 107.687 \\
+        Descartados no pré-filtro de idioma & \cfg{language_prefilter_decision = 'DISCARD'} & 74.669 \\
+        Selecionados para extração & \cfg{language_prefilter_decision = 'KEEP'} & 33.018 \\
+        Caracterizados como estrangeiro & Linhas de \cfg{ids_foreign.txt} & 5.618 \\
+        Caracterizados como indeterminado & Linhas de \cfg{ids_undetermined.txt} & 3.170 \\
+        Extraídos & Linhas da tabela \cfg{phd_pipeline.extraction} & 23.763 \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Universo de vídeos e classificação pelo \texttt{manager.py}.}
+\end{table}
+
+\noindent\textbf{Consulta que gerou o CSV consumido pelo \cfg{manager.py}.} A lista de IDs foi obtida da tabela \cfg{phd_pipeline.video_metadata_snapshot} e exportada com o comando \cfg{\copy} do \textit{psql} (com cabeçalho \cfg{video_id}), no contêiner \cfg{phd-ufmg-postgres-1}, gerando o arquivo \cfg{amostra.csv}:
+\begin{verbatim}
+SELECT youtube_video_id AS video_id
+FROM phd_pipeline.video_metadata_snapshot
+WHERE language_prefilter_decision = 'KEEP';
+\end{verbatim}
+
+\subsection{Volume e Tempo de Extração}
+
+\begin{table}[H]
+    \centering
+    \renewcommand{\arraystretch}{1.3}
+    \begin{tabularx}{\textwidth}{@{} l Y r @{}}
+        \toprule
+        \textbf{\textcolor{piblue}{Indicador}} & \textbf{\textcolor{piblue}{Fonte}} & \textbf{\textcolor{piblue}{Valor}} \\
+        \midrule
+        Vídeos extraídos & Linhas de \cfg{phd_pipeline.extraction} & 23.763 \\
+        Tamanho da extração & Soma de \cfg{size_bytes}, em GB ($10^9$ bytes) & 239,02 GB \\
+        Tempo de extração & Tempo de execução & $\approx$ 72 h \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Volume e tempo da extração.}
+\end{table}
+
+\subsection{Modalidades Baixadas}
+
+\begin{table}[H]
+    \centering
+    \renewcommand{\arraystretch}{1.3}
+    \begin{tabularx}{\textwidth}{@{} Y r @{}}
+        \toprule
+        \textbf{\textcolor{piblue}{Valor de \cfg{file_format}}} & \textbf{\textcolor{piblue}{Vídeos}} \\
+        \midrule
+        \cfg{AUDIO,SUBS} & 22.683 \\
+        \cfg{AUDIO,FRAMES,SUBS,THUMB} & 1.039 \\
+        \cfg{AUDIO} & 34 \\
+        \cfg{AUDIO,FRAMES,THUMB} & 6 \\
+        \cfg{AUDIO,SUBS,THUMB} & 1 \\
+        \midrule
+        \textbf{Total} & \textbf{23.763} \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Vídeos por combinação de modalidades extraídas.}
+\end{table}
+
+\subsection{Legendas}
+
+\begin{table}[H]
+    \centering
+    \renewcommand{\arraystretch}{1.3}
+    \begin{tabularx}{\textwidth}{@{} l Y r @{}}
+        \toprule
+        \textbf{\textcolor{piblue}{Tipo de legenda}} & \textbf{\textcolor{piblue}{Valor de \cfg{source_type}}} & \textbf{\textcolor{piblue}{Vídeos}} \\
+        \midrule
+        Automática & \cfg{YOUTUBE_AUTOMATIC} & 22.952 \\
+        Manual & \cfg{YOUTUBE_MANUAL} & 653 \\
+        Sem legenda & nulo & 158 \\
+        \midrule
+        \textbf{Total} & & \textbf{23.763} \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Vídeos extraídos por tipo de legenda.}
+\end{table}
+
+%==============================================================================
+\section{Pendências e Evolução}
+%==============================================================================
+
+\begin{table}[H]
+    \centering
+    \renewcommand{\arraystretch}{1.3}
+    \begin{tabularx}{\textwidth}{@{} l Y @{}}
+        \toprule
+        \textbf{\textcolor{piblue}{Frente}} & \textbf{\textcolor{piblue}{Ação}} \\
+        \midrule
+        Banco de dados & Fechar a modelagem em equipe e registrar também a versão do \textit{ffmpeg} e um \textit{checklist} do que foi extraído por vídeo (hoje só a versão do \textit{yt-dlp} é gravada). \\
+        Pipeline de execução & Melhorar a pipeline, que funciona, mas ainda é improvisada e pode apresentar problemas em larga escala. \\
+        Infraestrutura & Ampliar o número de máquinas e IPs, com meta de cerca de 5, preferindo máquinas virtuais gratuitas na nuvem. Na pior das hipóteses, contratar 3 ou 4 máquinas simples no Google, com custo estimado baixo (ordem de US\$ 5 por mês, a confirmar). \\
+        Legenda e modalidades não batem & Há 158 vídeos sem legenda (\protect\cfg{source\_type} nulo), mas só 40 sem SUBS no \texttt{file\_format} (34 de \protect\cfg{AUDIO} e 6 de \protect\cfg{AUDIO,FRAMES,THUMB}). Pelo código, os dois deveriam coincidir. Pode ser reflexo da \textit{migration} que apagou colunas, e a \textit{query} de consistência que passei antes mostra se sobrou algum nulo. \\
+        Vídeos sem categoria & Dos 33.018 KEEP, 23.763 foram extraídos e 8.788 foram classificados como estrangeiro ou indeterminado. Sobram 467, que podem ser indisponíveis, restritos por idade, erro 429 ou pendentes. \\
+        Desempenho & Medir vídeos extraídos por minuto e estimar o tempo total de execução. \\
+        Entrada de vídeos & Automatizar o fluxo de entrada, conforme proposto abaixo. \\
+        \bottomrule
+    \end{tabularx}
+    \caption{Frentes de trabalho planejadas.}
+\end{table}
+
+\subsection{Proposta de Automação do Fluxo de Entrada}
+Atualmente, o Luís extrai com a API do YouTube os IDs dos vídeos de interesse e entrega um CSV, que dispara os downloads. A proposta é integrar e automatizar esse processo:
+\begin{enumerate}[leftmargin=*]
+    \item O Luís registra no banco de dados os vídeos que extraiu com a API.
+    \item Uma rotina periódica verifica quais vídeos foram adicionados ao banco.
+    \item Para cada vídeo, a rotina confere se já existem dados no \textit{bucket}.
+    \item Se não existirem, a rotina chama automaticamente o \textit{script} que baixa o vídeo.
+\end{enumerate}
+
+\end{document}
