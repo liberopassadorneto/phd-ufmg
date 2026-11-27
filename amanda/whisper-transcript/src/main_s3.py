@@ -8,6 +8,7 @@ from importlib.metadata import version
 import torch
 import whisper
 from config import MODELO_IDIOMA, MODELO_MEDIUM
+from armazenamento import salvar_no_drive_e_s3
 from db import conectar, descartar_video, registrar_transcricao, videos_pendentes
 from idioma import analisar_inicio, so_musica
 from s3_audios import BUCKET_AUDIOS, cliente_s3, iter_mp3, achar_mp3
@@ -19,7 +20,6 @@ from transcricao import (
 )
 
 BUCKET_TRANSCRICOES = "youtube-transcripts"
-PREFIXO_TRANSCRICOES = "whisper/"
 PASTA_TEMP = "audios_temp"
 CAMINHO_VERIFICADOS = "videos_verificados.jsonl"   # vídeos analisados e não transcritos
 IDIOMA_ACEITO = "pt"
@@ -118,11 +118,14 @@ def main():
                     continue
 
                 corpo = texto_final.encode("utf-8")
-                bucket_key = f"{PREFIXO_TRANSCRICOES}{youtube_id}.txt"
-                s3.put_object(Bucket=BUCKET_TRANSCRICOES, Key=bucket_key,
-                              Body=corpo, ContentType="text/plain; charset=utf-8")
+                bucket_key, arquivo_local = salvar_no_drive_e_s3(
+                    s3, BUCKET_TRANSCRICOES, youtube_id, corpo)
                 registrar_transcricao(conn, video_id, MODEL_VERSION, round(tempo, 2),
                                       BUCKET_TRANSCRICOES, bucket_key, len(corpo))
+                try:
+                    arquivo_local.unlink()
+                except OSError as erro:
+                    print(f"Não foi possível remover a cópia local {arquivo_local}: {erro}")
                 resumo["transcrito"] += 1
                 analisados += 1
                 print(f"{youtube_id}: {tempo:.1f}s para {duracao:.1f}s de áudio.\n\n Salvo!!!")

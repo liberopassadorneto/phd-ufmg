@@ -341,6 +341,20 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
     return record
 
 
+def upload_results(output_root, remote_root):
+    remote = f"{remote_root.rstrip('/')}/claim-extractor/runs/{output_root.name}"
+    print(f"Uploading results to {remote}", flush=True)
+    try:
+        subprocess.run(["rclone", "copy", str(output_root), remote,
+                        "--contimeout", "30s", "--timeout", "5m", "--retries", "3"],
+                       check=True, timeout=1800)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"Drive upload failed for {output_root}: {exc}. "
+              "Local results are available for retry.", file=sys.stderr, flush=True)
+        return False
+    return True
+
+
 def main(argv=None, model_alias=None):
     args = parse_args(argv, model_alias=model_alias)
     if args.storage:
@@ -375,6 +389,8 @@ def main(argv=None, model_alias=None):
         write_json(args.output_dir / "inputs.json", inputs)
     args.staging_dir.mkdir(parents=True, exist_ok=True)
     records = []
+    uploads_ok = True
+    remote_root = os.environ.get("DRIVE_OUTPUT_DESTINATION", "phd-drive:phd-ufmg")
     # Worker communication lives only in this temporary directory.
     with tempfile.TemporaryDirectory(prefix="claim-run-", dir=args.staging_dir) as temporary:
         run_dir = Path(temporary)
@@ -396,11 +412,13 @@ def main(argv=None, model_alias=None):
                     for item in records]
                 write_json(args.output_dir / "summary.json", summary)
             print(f"Output and processing: {destination}", flush=True)
+            uploads_ok = upload_results(destination.parent, remote_root) and uploads_ok
             if record["status"] == "interrupted" or record.get("cleanup_error"):
                 break
     if any(r["status"] == "interrupted" for r in records):
         return 130
-    return int(len(records) != len(args.selected) or any(r["status"] != "success" for r in records))
+    return int(not uploads_ok or len(records) != len(args.selected)
+               or any(r["status"] != "success" for r in records))
 
 
 if __name__ == "__main__":

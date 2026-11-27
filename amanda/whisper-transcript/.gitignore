@@ -1,6 +1,7 @@
 .venv/
 src/audios/
 src/audios_temp/
+src/transcricoes_pendentes/
 src/legendas/
 src/videos_verificados.jsonl
 src/sem_audio.txt

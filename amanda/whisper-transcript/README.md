@@ -44,3 +44,17 @@ python main.py
 
 - Para refazer uma transcrição, apague o `.jsonl` correspondente (ou a linha do áudio).
 - WER/CER muito altos (ex.: 35) costumam vir de áudios com música/sem fala, em que um modelo gera quase nada e o outro alucina texto. Veja `piores_casos` e a detecção de idioma antes de interpretar as médias; a mediana é mais robusta que a média.
+
+## Transcrições do fluxo S3
+
+O `src/main_s3.py` grava cada texto no Google Drive usando o remote rclone
+`phd-drive:phd-ufmg/whisper/transcricoes`. A variável de ambiente
+`DRIVE_OUTPUT_DESTINATION` pode alterar o destino raiz. O S3 recebe uma
+referência JSON em `whisper/references/`, e o PostgreSQL registra o bucket e
+a chave dessa referência. O campo `size_bytes` descreve o texto original.
+
+Use `armazenamento.ler_transcricao(s3, bucket, chave)` para ler o texto a
+partir da chave registrada no banco. A função também lê os arquivos `.txt`
+antigos armazenados diretamente no S3. O acesso a novas transcrições requer
+um remote rclone com o mesmo nome e acesso ao Drive. Se o upload ou o registro
+falhar, a cópia local permanece em `src/transcricoes_pendentes/` para recuperação.
