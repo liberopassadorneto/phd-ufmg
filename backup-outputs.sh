@@ -13,10 +13,10 @@ fi
 
 if (( $# == 0 )); then
   if [[ -d "$repo/libero/claim-extractor/results" ]]; then
-    rclone copy "${flags[@]}" "$repo/libero/claim-extractor/results" "$destination/claim-extractor/results"
+    rclone copy "${flags[@]}" "$repo/libero/claim-extractor/results" "$destination/libero/claim-extractor/results"
   fi
   if [[ -d "$storage/results" ]]; then
-    rclone copy "${flags[@]}" "$storage/results" "$destination/claim-extractor/cuba-results"
+    rclone copy "${flags[@]}" "$storage/results" "$destination/libero/claim-extractor/cuba-results"
   fi
   exit
 fi

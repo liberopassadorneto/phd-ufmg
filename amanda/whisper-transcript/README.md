@@ -47,8 +47,14 @@ python main.py
 
 ## Transcrições do fluxo S3
 
+O `src/main_s3.py` busca áudios `.mp3` no Drive em
+`phd-drive:phd-ufmg/amanda/whisper-transcript/audios`, ou no caminho indicado por
+`WHISPER_AUDIO_DRIVE`. Os nomes aceitos são `<youtube_id>.mp3` ou arquivos
+`.mp3` dentro de uma pasta chamada `<youtube_id>`. O remote precisa ter acesso
+a esses arquivos. O PostgreSQL e o S3 continuam acessados pelo túnel existente.
+
 O `src/main_s3.py` grava cada texto no Google Drive usando o remote rclone
-`phd-drive:phd-ufmg/whisper/transcricoes`. A variável de ambiente
+`phd-drive:phd-ufmg/amanda/whisper-transcript/transcricoes`. A variável de ambiente
 `DRIVE_OUTPUT_DESTINATION` pode alterar o destino raiz. O S3 recebe uma
 referência JSON em `whisper/references/`, e o PostgreSQL registra o bucket e
 a chave dessa referência. O campo `size_bytes` descreve o texto original.

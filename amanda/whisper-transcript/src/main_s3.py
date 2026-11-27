@@ -8,10 +8,10 @@ from importlib.metadata import version
 import torch
 import whisper
 from config import MODELO_IDIOMA, MODELO_MEDIUM
-from armazenamento import salvar_no_drive_e_s3
+from armazenamento import baixar_audio_drive, listar_audios_drive, salvar_no_drive_e_s3
 from db import conectar, descartar_video, registrar_transcricao, videos_pendentes
 from idioma import analisar_inicio, so_musica
-from s3_audios import BUCKET_AUDIOS, cliente_s3, iter_mp3, achar_mp3
+from s3_audios import cliente_s3
 from transcricao import (
     carregar_transcricoes_salvas,
     obter_duracao_audio,
@@ -25,14 +25,6 @@ CAMINHO_VERIFICADOS = "videos_verificados.jsonl"   # vídeos analisados e não t
 IDIOMA_ACEITO = "pt"
 LIMITE = None          # vídeos analisados (transcritos ou não); None = todos
 MODEL_VERSION = f"{version('openai-whisper')}/{MODELO_MEDIUM}"
-CAMINHO_SEM_AUDIO = "sem_audio.txt"
-
-def carregar_sem_audio():
-    if os.path.exists(CAMINHO_SEM_AUDIO):
-        with open(CAMINHO_SEM_AUDIO, encoding="utf-8") as f:
-            return {linha.strip() for linha in f if linha.strip()}
-    return set()
-
 def main():
     print("\n=========== PREPARANDO CONEXÃO ============\n")
 
@@ -42,7 +34,7 @@ def main():
 
     pendentes = videos_pendentes(conn)
     verificados = carregar_transcricoes_salvas(CAMINHO_VERIFICADOS)
-    sem_audio = carregar_sem_audio()
+    audios_drive = listar_audios_drive()
 
     print(f"{len(pendentes)} vídeos sem transcrição no banco, "
           f"{len(verificados)} já verificados e não transcritos.")
@@ -58,22 +50,20 @@ def main():
         for n, (youtube_id, (video_id, snapshot_id, decisao, idioma_anterior)) in enumerate(pendentes.items(), 1):
             if n % 500 == 0:
                 print(f"\n... {n} de {len(pendentes)} vídeos conferidos\n")
-            if youtube_id in verificados or youtube_id in sem_audio:
+            if youtube_id in verificados:
                 continue
             if LIMITE and analisados >= LIMITE:
                 break
 
-            key = achar_mp3(s3, youtube_id)
-            if key is None:
-                sem_audio.add(youtube_id)
-                with open(CAMINHO_SEM_AUDIO, "a", encoding="utf-8") as f:
-                    f.write(youtube_id + "\n")
+            origem_audio = audios_drive.get(youtube_id)
+            if origem_audio is None:
+                print(f"{youtube_id}: áudio não encontrado no Drive")
                 continue
 
             temp = f"{PASTA_TEMP}/{youtube_id}.mp3"
             try:
                 print(f"\nBaixando {youtube_id} (filtro anterior: {decisao})...\n")
-                s3.download_file(BUCKET_AUDIOS, key, temp)
+                baixar_audio_drive(origem_audio, temp)
 
                 # Filtro do Whisper: roda em todos, inclusive nos já DISCARD
                 idioma, confianca, texto = analisar_inicio(temp, modelo_idioma)

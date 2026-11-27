@@ -342,7 +342,7 @@ def run_one(args, spec, run_dir, inputs, aps, runtimes):
 
 
 def upload_results(output_root, remote_root):
-    remote = f"{remote_root.rstrip('/')}/claim-extractor/runs/{output_root.name}"
+    remote = f"{remote_root.rstrip('/')}/libero/claim-extractor/runs/{output_root.name}"
     print(f"Uploading results to {remote}", flush=True)
     try:
         subprocess.run(["rclone", "copy", str(output_root), remote,
