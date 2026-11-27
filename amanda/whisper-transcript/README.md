@@ -44,3 +44,19 @@ python main.py
 
 - Para refazer uma transcrição, apague o `.jsonl` correspondente (ou a linha do áudio).
 - WER/CER muito altos (ex.: 35) costumam vir de áudios com música/sem fala, em que um modelo gera quase nada e o outro alucina texto. Veja `piores_casos` e a detecção de idioma antes de interpretar as médias; a mediana é mais robusta que a média.
+
+## Transcrições no Google Drive
+
+O `src/main_s3.py` busca áudios `.mp3` no bucket S3 local de Greenwich,
+`youtube-assets-bucket`, sob `data/<youtube_id>/`. Em Cuba, PostgreSQL e S3
+são acessados pelo túnel existente. O Google Drive recebe as transcrições.
+
+O `src/main_s3.py` grava cada texto no Google Drive usando o remote rclone
+`phd-drive:phd-ufmg/amanda/whisper-transcript/transcricoes`. A variável de ambiente
+`DRIVE_OUTPUT_DESTINATION` pode alterar o destino raiz. O PostgreSQL registra o
+caminho em `drive_file`, associado a `whisper_transcript`.
+
+Use `db.caminho_transcricao(conn, video_id)` para obter o caminho e
+`armazenamento.ler_transcricao(caminho)` para ler o texto. O acesso requer
+um remote rclone com o mesmo nome e acesso ao Drive. Se o upload ou o registro
+falhar, a cópia local permanece em `src/transcricoes_pendentes/` para recuperação.
